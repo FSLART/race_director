@@ -9,6 +9,8 @@
 
 #include "lart_msgs/msg/state.hpp"
 
+#define TIMESTAMP_MARGIN 3.0 // seconds
+
 using namespace std::placeholders;
 
 
@@ -37,6 +39,7 @@ class RaceDirector : public rclcpp::Node {
 
         void send_state_to_nodes();
 
+        int get_current_state();
 
         /* Steering Service Related*/
         void request_steering_timestamp();
@@ -48,7 +51,6 @@ class RaceDirector : public rclcpp::Node {
         void request_perception_timestamp();
 
         void handle_perception_timestamp_response(rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future);
-
 
 
 

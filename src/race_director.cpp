@@ -87,11 +87,11 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
     auto received_state = msg->data;
     switch (received_state){
         case lart_msgs::msg::State::FINISH:
-        if (current_state == lart_msgs::msg::State::DRIVING)
-        this->change_state(lart_msgs::msg::State::FINISH);
+            if (current_state == lart_msgs::msg::State::DRIVING)
+            this->change_state(lart_msgs::msg::State::FINISH);
         break;
-        case lart_msgs::msg::State::EMERGENCY:
-        this->change_state(lart_msgs::msg::State::EMERGENCY);
+            case lart_msgs::msg::State::EMERGENCY:
+            this->change_state(lart_msgs::msg::State::EMERGENCY);
         break;
     }
 }
@@ -121,7 +121,7 @@ void RaceDirector::handle_steering_timestamp_response(rclcpp::Client<std_srvs::s
             // Convert builtin_interfaces::msg::Time to rclcpp::Time
             rclcpp::Time last_steering_timestamp(last_steering_timestamp_msg.sec, last_steering_timestamp_msg.nanosec, RCL_ROS_TIME);
 
-            if ((now - last_steering_timestamp).seconds() > 3.0) {
+            if ((now - last_steering_timestamp).seconds() > TIMESTAMP_MARGIN) {
                 this->change_state(lart_msgs::msg::State::EMERGENCY);
             }
             
@@ -158,7 +158,7 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<std_srvs:
             // Convert builtin_interfaces::msg::Time to rclcpp::Time
             rclcpp::Time last_perception_timestamp(last_perception_timestamp_msg.sec, last_perception_timestamp_msg.nanosec, RCL_ROS_TIME);
 
-            if ((now - last_perception_timestamp).seconds() > 3.0) {
+            if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
                 this->change_state(lart_msgs::msg::State::EMERGENCY);
             }
             
@@ -170,6 +170,10 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<std_srvs:
     }
 }
 #pragma endregion
+
+int RaceDirector::get_current_state(){
+    return this->current_state;
+}
 
 void RaceDirector::change_state(int new_state) {
     std::lock_guard<std::mutex> lock(state_mutex);
