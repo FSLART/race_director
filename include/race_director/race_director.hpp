@@ -4,10 +4,12 @@
 #include <cstdio>
 #include <chrono>
 #include <thread>
+#include <cstdlib> 
 #include <rclcpp/rclcpp.hpp>
 #include "std_srvs/srv/trigger.hpp"
 
 #include "lart_msgs/msg/state.hpp"
+#include "lart_msgs/srv/heartbeat.hpp"
 
 #define TIMESTAMP_MARGIN 3.0 // seconds
 
@@ -17,6 +19,12 @@ using namespace std::placeholders;
 class RaceDirector : public rclcpp::Node {
     public:
         RaceDirector();
+        ~RaceDirector();
+        
+        void acu_state_callback(const lart_msgs::msg::State::SharedPtr msg);
+        int get_current_state();
+
+
     private:
 
     /* Variables*/
@@ -31,7 +39,6 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::TimerBase::SharedPtr perception_timestamp_timer;
 
     /* Functions */
-        void acu_state_callback(const lart_msgs::msg::State::SharedPtr msg);
 
         void nodes_state_callback(const lart_msgs::msg::State::SharedPtr msg);
 
@@ -39,35 +46,26 @@ class RaceDirector : public rclcpp::Node {
 
         void send_state_to_nodes();
 
-        int get_current_state();
-
         /* Steering Service Related*/
         void request_steering_timestamp();
 
-        void handle_steering_timestamp_response(rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future);
-
+        void handle_steering_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future);
 
         /* Perception Service Related*/
         void request_perception_timestamp();
 
-        void handle_perception_timestamp_response(rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future);
+        void handle_perception_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future);
 
+    /* Service Clients */
+        rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr steering_timestamp;
 
-
-    /* Services*/
-
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr steering_timestamp;
-
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr perception_timestamp;
-        
+        rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr perception_timestamp;
 
     /* Publishers */
         rclcpp::Publisher<lart_msgs::msg::State>::SharedPtr state_publisher;
-
 
     /* Subscribers */
         rclcpp::Subscription<lart_msgs::msg::State>::SharedPtr acu_state_subscriber;
         rclcpp::Subscription<lart_msgs::msg::State>::SharedPtr nodes_state_subscriber;
 };
-
 #endif //RACE_DIRECTOR_HPP

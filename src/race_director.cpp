@@ -2,6 +2,11 @@
 
 RaceDirector::RaceDirector() : Node("race_director"){
 
+    bool is_unit_test = false;
+    if (const char *env = std::getenv("UNIT_TEST")) {
+      is_unit_test = (std::string(env) == "1");
+    }
+
     /* Publishers*/
     this->state_publisher = this->create_publisher<lart_msgs::msg::State>("/state", 10);
 
@@ -10,28 +15,30 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/nodes/state", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
     
     /* Services */
-    this->steering_timestamp = this->create_client<std_srvs::srv::Trigger>("steering/last_timestamp");
-
-    while (!this->steering_timestamp->wait_for_service(std::chrono::seconds(1))) {
-        if (!rclcpp::ok()) {
-            RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for steering/last_timestamp service.");
-            return;
-        }
-        RCLCPP_INFO(this->get_logger(), "Waiting for steering/last_timestamp service...");
-    }
-
-    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_steering_timestamp, this));
-
-    this->perception_timestamp = this->create_client<std_srvs::srv::Trigger>("zed/last_timestamp");
+    if (!is_unit_test){
+        this->steering_timestamp = this->create_client<lart_msgs::srv::Heartbeat>("steering/last_timestamp");
     
-    while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
-        if (!rclcpp::ok()) {
-            RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
-            return;
+        while (!this->steering_timestamp->wait_for_service(std::chrono::seconds(1))) {
+            if (!rclcpp::ok()) {
+                RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for steering/last_timestamp service.");
+                return;
+            }
+            RCLCPP_INFO(this->get_logger(), "Waiting for steering/last_timestamp service...");
         }
-        RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
+    
+        this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_steering_timestamp, this));
+    
+        this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>("zed/last_timestamp");
+        
+        while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
+            if (!rclcpp::ok()) {
+                RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
+                return;
+            }
+            RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
+        }
+        this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     }
-    this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
 
     
     /* Threads */
@@ -42,7 +49,13 @@ RaceDirector::RaceDirector() : Node("race_director"){
             rate.sleep();
         }
     });
+    this->state_thread.detach();
 
+}
+RaceDirector::~RaceDirector(){
+    if (this->state_thread.joinable()) {
+        this->state_thread.join();
+    }
 }
 
 void RaceDirector::acu_state_callback(const lart_msgs::msg::State::SharedPtr msg) {
@@ -96,75 +109,49 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
     }
 }
 
-#pragma region Perception Service Related
+#pragma region Steering Service
 
 void RaceDirector::request_steering_timestamp(){
-    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    auto request = std::make_shared<lart_msgs::srv::Heartbeat::Request>();
     auto future = this->steering_timestamp->async_send_request(
         request,
         std::bind(&RaceDirector::handle_steering_timestamp_response, this, _1));
 }
 
-void RaceDirector::handle_steering_timestamp_response(rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future){
+void RaceDirector::handle_steering_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future){
     try {
         auto response = future.get();
-        if (response->success) {
-            RCLCPP_INFO(this->get_logger(), "Received timestamp: %s", response->message.c_str());
-            auto last_steering_timestamp_str = response->message;
-            auto now = this->now();
+        auto last_steering_timestamp = response->timestamp;
+        auto now = this->now();
 
-            // Parse the timestamp string to builtin_interfaces::msg::Time
-            builtin_interfaces::msg::Time last_steering_timestamp_msg;
-            std::stringstream ss(last_steering_timestamp_str);
-            ss >> last_steering_timestamp_msg.sec >> last_steering_timestamp_msg.nanosec;
-
-            // Convert builtin_interfaces::msg::Time to rclcpp::Time
-            rclcpp::Time last_steering_timestamp(last_steering_timestamp_msg.sec, last_steering_timestamp_msg.nanosec, RCL_ROS_TIME);
-
-            if ((now - last_steering_timestamp).seconds() > TIMESTAMP_MARGIN) {
-                this->change_state(lart_msgs::msg::State::EMERGENCY);
-            }
-            
-        } else {
-            RCLCPP_WARN(this->get_logger(), "steering/last_timestamp call failed.");
+        if ((now - last_steering_timestamp).seconds() > TIMESTAMP_MARGIN) {
+            this->change_state(lart_msgs::msg::State::EMERGENCY);
         }
+        
     } catch (const std::exception &e) {
         RCLCPP_ERROR(this->get_logger(), "Service call failed: %s", e.what());
     }
 }
 #pragma endregion
 
-#pragma region Perception Service Related
+#pragma region Perception Service
 void RaceDirector::request_perception_timestamp(){
-    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    auto request = std::make_shared<lart_msgs::srv::Heartbeat::Request>();
     auto future = this->perception_timestamp->async_send_request(
         request,
         std::bind(&RaceDirector::handle_perception_timestamp_response, this, _1));
 }
 
-void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future){
+void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future){
     try {
         auto response = future.get();
-        if (response->success) {
-            RCLCPP_INFO(this->get_logger(), "Received timestamp: %s", response->message.c_str());
-            auto last_perception_timestamp_str = response->message;
-            auto now = this->now();
+        auto last_perception_timestamp = response->timestamp;
+        auto now = this->now();
 
-            // Parse the timestamp string to builtin_interfaces::msg::Time
-            builtin_interfaces::msg::Time last_perception_timestamp_msg;
-            std::stringstream ss(last_perception_timestamp_str);
-            ss >> last_perception_timestamp_msg.sec >> last_perception_timestamp_msg.nanosec;
-
-            // Convert builtin_interfaces::msg::Time to rclcpp::Time
-            rclcpp::Time last_perception_timestamp(last_perception_timestamp_msg.sec, last_perception_timestamp_msg.nanosec, RCL_ROS_TIME);
-
-            if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
-                this->change_state(lart_msgs::msg::State::EMERGENCY);
-            }
-            
-        } else {
-            RCLCPP_WARN(this->get_logger(), "zed/last_timestamp call failed.");
+        if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
+            this->change_state(lart_msgs::msg::State::EMERGENCY);
         }
+        
     } catch (const std::exception &e) {
         RCLCPP_ERROR(this->get_logger(), "Service call failed: %s", e.what());
     }
