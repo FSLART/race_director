@@ -11,8 +11,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->state_publisher = this->create_publisher<lart_msgs::msg::State>("/state", 10);
 
     /* Subscribers */
-    this->acu_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/acu/state", 10, std::bind(&RaceDirector::acu_state_callback, this, _1));
-    this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/nodes/state", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
+    this->acu_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/acu", 10, std::bind(&RaceDirector::acu_state_callback, this, _1));
+    this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/nodes", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
     
     /* Services */
     if (!is_unit_test){
@@ -101,7 +101,7 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
     switch (received_state){
         case lart_msgs::msg::State::FINISH:
             if (current_state == lart_msgs::msg::State::DRIVING)
-            this->change_state(lart_msgs::msg::State::FINISH);
+                this->change_state(lart_msgs::msg::State::FINISH);
         break;
             case lart_msgs::msg::State::EMERGENCY:
             this->change_state(lart_msgs::msg::State::EMERGENCY);
@@ -184,7 +184,6 @@ int main(int argc, char *argv[])
         rclcpp::init(argc, argv);
         rclcpp::spin(std::make_shared<RaceDirector>());
         rclcpp::shutdown();
-
 
     return 0;
 }
