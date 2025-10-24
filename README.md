@@ -1,14 +1,19 @@
 # race_director
 
+## Cloning the Repository
 
+```bash
+git clone https://github.com/FSLART/race_director.git
+```
+
+## Running Tests
 To run the tests in the `race_director_test.cpp` file, you can use the following commands:
 
-1. 
 ```bash
-    ./build/race_director/test/race_director_test
+./build/race_director/test/race_director_test
 ```
-2. 
+Or 
 ```bash
-    colcon test --packages-select race_director
-    colcon test-result --verbose
+colcon test --packages-select race_director
+colcon test-result --verbose
 ```
