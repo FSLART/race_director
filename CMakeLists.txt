@@ -28,6 +28,11 @@ add_executable(race_director
 target_link_libraries(race_director race_director_lib)
 ament_target_dependencies(race_director rclcpp std_msgs lart_msgs std_srvs)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(race_director_lib PRIVATE -Wno-unknown-pragmas)
+  target_compile_options(race_director PRIVATE -Wno-unknown-pragmas)
+endif()
+
 install(TARGETS race_director race_director_lib
   DESTINATION lib/${PROJECT_NAME})
 
