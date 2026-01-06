@@ -73,9 +73,12 @@ void RaceDirector::acu_state_callback(const lart_msgs::msg::State::SharedPtr msg
         case lart_msgs::msg::State::READY:
             RCLCPP_INFO(this->get_logger(), "State changed to READY");
             this->ready_change = std::chrono::steady_clock::now();
+            this->ready_change_set = true;
             this->change_state(lart_msgs::msg::State::READY);
             break;
         case lart_msgs::msg::State::DRIVING:{
+            if (!this->ready_change_set)
+                break;
             std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
             if ( current_state == lart_msgs::msg::State::READY && time_in_ready > std::chrono::seconds(6)) {
                 RCLCPP_INFO(this->get_logger(), "State changed to DRIVING");

@@ -31,6 +31,7 @@ class RaceDirector : public rclcpp::Node {
         int previous_state = lart_msgs::msg::State::OFF;
         int current_state = lart_msgs::msg::State::OFF;
         std::chrono::steady_clock::time_point ready_change;
+        bool ready_change_set = false;
         
         std::mutex state_mutex;
         std::thread state_thread;
