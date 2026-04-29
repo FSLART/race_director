@@ -18,12 +18,12 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>("/res", 10, std::bind(&RaceDirector::res_callback, this, _1));
     this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/nodes", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
     this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>("/mission", 10, std::bind(&RaceDirector::mission_callback, this, _1));
-    imu_acc_sub_.subscribe(this, "/imu/acc");
+    imu_acc_sub_.subscribe(this, "/imu/acceleration");
     imu_gyro_sub_.subscribe(this, "/imu/angular_velocity");
     
     //sync imu acc and gyro subs
-    sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
-    sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
+    imu_sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
+    imu_sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
     
     /* Services */
     if (!is_unit_test){
@@ -186,6 +186,20 @@ void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stampe
     this->dv_dynamics2_msg.yaw_rate = gyro_msg->vector.z;
 }
 
+void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
+    this->dv_dynamics1_msg.steering_angle_target = 0.0;
+    this->dv_dynamics1_msg.steering_angle_actual = 0.0;
+    this->dv_dynamics1_msg.speed_target = 0.0;
+    this->dv_dynamics1_msg.speed_actual = 0.0;
+    this->dv_dynamics1_msg.brake_hydr_target = 0.0;
+    this->dv_dynamics1_msg.brake_hydr_actual = 0.0;
+    this->dv_dynamics1_msg.motor_moment_target = 0.0;
+    this->dv_dynamics1_msg.motor_moment_actual = 0.0;
+
+    //prepare control commands for vcu and cubemars
+    
+}
+
 #pragma region Steering Service
 
 void RaceDirector::request_steering_timestamp(){
@@ -241,6 +255,9 @@ int RaceDirector::get_current_state(){
 
 void RaceDirector::change_state(int new_state) {
     std::lock_guard<std::mutex> lock(state_mutex);
+    if(this->current_state == lart_msgs::msg::State::EMERGENCY){
+        return;
+    }
     this->current_state = new_state;
 }
 

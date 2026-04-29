@@ -10,11 +10,13 @@
 #include <std_srvs/srv/trigger.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
+#include "lart_common.h"
 
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 
 #include "lart_msgs/msg/state.hpp"
 #include "lart_msgs/msg/mission.hpp"
+#include "lart_msgs/msg/dynamics_cmd.hpp"
 #include "lart_msgs/msg/slam_stats.hpp"
 #include "lart_msgs/srv/heartbeat.hpp"
 
@@ -76,6 +78,8 @@ class RaceDirector : public rclcpp::Node {
 
         void combined_imu_callback(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& acc_msg, 
                             const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& gyro_msg);
+        
+        void control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg);
 
         void change_state(int new_state);
 
@@ -116,7 +120,8 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Subscription<lart_msgs::msg::State>::SharedPtr nodes_state_subscriber;
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_acc_sub_;
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_gyro_sub_;
-        std::shared_ptr<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>> sync_;
+        std::shared_ptr<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>> imu_sync_;
+        rclcpp::Subscription<lart_msgs::msg::DynamicsCMD>::SharedPtr dynamics_subscriber;
 
 };
 #endif //RACE_DIRECTOR_HPP

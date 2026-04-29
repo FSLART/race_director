@@ -24,6 +24,11 @@ target_include_directories(race_director_lib PUBLIC
 )
 target_compile_features(race_director_lib PUBLIC c_std_99 cxx_std_17)
 
+include_directories(
+  include
+  ${CMAKE_SOURCE_DIR}/../lart_common
+)
+
 add_executable(race_director
   src/race_director.cpp
 )
