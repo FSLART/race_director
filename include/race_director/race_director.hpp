@@ -26,6 +26,9 @@
 #include "lart_msgs/msg/dv_dynamics1.hpp"
 #include "lart_msgs/msg/dv_dynamics2.hpp"
 #include "lart_msgs/msg/slam_stats_can.hpp"
+#include "lart_msgs/msg/cubemars_position_loop.hpp"
+#include "lart_msgs/msg/vcu_torque_target.hpp"
+
 
 
 
@@ -111,6 +114,8 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Publisher<lart_msgs::msg::SlamStatsCan>::SharedPtr slam_stats_can_publisher;
         rclcpp::Publisher<lart_msgs::msg::DvDynamics1>::SharedPtr dv_dynamics1_publisher;
         rclcpp::Publisher<lart_msgs::msg::DvDynamics2>::SharedPtr dv_dynamics2_publisher;
+        rclcpp::Publisher<lart_msgs::msg::CubemarsPositionLoop>::SharedPtr cubemars_position_loop_publisher;
+        rclcpp::Publisher<lart_msgs::msg::VcuTorqueTarget>::SharedPtr vcu_torque_target_publisher;
         
         /* Subscribers */
         rclcpp::Subscription<lart_msgs::msg::Mission>::SharedPtr mission_subscriber;

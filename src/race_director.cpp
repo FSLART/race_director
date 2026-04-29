@@ -13,6 +13,9 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->slam_stats_can_publisher = this->create_publisher<lart_msgs::msg::SlamStatsCan>("/dv/slam_stats", 10);
     this->dv_dynamics1_publisher = this->create_publisher<lart_msgs::msg::DvDynamics1>("/dv/dynamics1", 10);
     this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>("/dv/dynamics2", 10);
+    this->cubemars_position_loop_publisher = this->create_publisher<lart_msgs::msg::CubemarsPositionLoop>("/cubemars/position_loop", 10);
+    this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>("/vcu/torque_target", 10);
+
     /* Subscribers */
     this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>("/acu", 10, std::bind(&RaceDirector::acu_callback, this, _1));
     this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>("/res", 10, std::bind(&RaceDirector::res_callback, this, _1));
@@ -187,17 +190,31 @@ void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stampe
 }
 
 void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
-    this->dv_dynamics1_msg.steering_angle_target = 0.0;
+    float angle = msg->steering_angle;
+    float sw_angle = -61.6073*pow(angle, 4)+449.05708*pow(angle, 3)+16.71117*pow(angle, 2)+156.50789*angle;
+    float rel_current = msg->acc_cmd*100;
+    
+    this->dv_dynamics1_msg.steering_angle_target = sw_angle;
     this->dv_dynamics1_msg.steering_angle_actual = 0.0;
     this->dv_dynamics1_msg.speed_target = 0.0;
     this->dv_dynamics1_msg.speed_actual = 0.0;
     this->dv_dynamics1_msg.brake_hydr_target = 0.0;
     this->dv_dynamics1_msg.brake_hydr_actual = 0.0;
-    this->dv_dynamics1_msg.motor_moment_target = 0.0;
+    this->dv_dynamics1_msg.motor_moment_target = rel_current;
     this->dv_dynamics1_msg.motor_moment_actual = 0.0;
-
-    //prepare control commands for vcu and cubemars
     
+    //prepare control commands for vcu and cubemars
+    lart_msgs::msg::VcuTorqueTarget vcu_msg;
+    vcu_msg.header.stamp = this->now();
+    vcu_msg.torque_target = rel_current;
+    this->vcu_torque_target_publisher->publish(vcu_msg);
+
+    lart_msgs::msg::CubemarsPositionLoop cubemars_msg;
+    cubemars_msg.header.stamp = this->now();
+    cubemars_msg.steering_angle_target = sw_angle;
+    this->cubemars_position_loop_publisher->publish(cubemars_msg);
+
+
 }
 
 #pragma region Steering Service
