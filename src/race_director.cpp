@@ -9,10 +9,21 @@ RaceDirector::RaceDirector() : Node("race_director"){
 
     /* Publishers*/
     this->state_publisher = this->create_publisher<lart_msgs::msg::State>("/state", 10);
-
+    this->jetson_publisher = this->create_publisher<lart_msgs::msg::Jetson>("/jetson", 10);
+    this->slam_stats_can_publisher = this->create_publisher<lart_msgs::msg::SlamStatsCan>("/dv/slam_stats", 10);
+    this->dv_dynamics1_publisher = this->create_publisher<lart_msgs::msg::DvDynamics1>("/dv/dynamics1", 10);
+    this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>("/dv/dynamics2", 10);
     /* Subscribers */
-    this->acu_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/acu", 10, std::bind(&RaceDirector::acu_state_callback, this, _1));
+    this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>("/acu", 10, std::bind(&RaceDirector::acu_callback, this, _1));
+    this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>("/res", 10, std::bind(&RaceDirector::res_callback, this, _1));
     this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/nodes", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
+    this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>("/mission", 10, std::bind(&RaceDirector::mission_callback, this, _1));
+    imu_acc_sub_.subscribe(this, "/imu/acc");
+    imu_gyro_sub_.subscribe(this, "/imu/angular_velocity");
+    
+    //sync imu acc and gyro subs
+    sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
+    sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
     
     /* Services */
     if (!is_unit_test){
@@ -40,7 +51,11 @@ RaceDirector::RaceDirector() : Node("race_director"){
         this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     }
 
-    
+    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>("/start_recording");
+    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>("/stop_recording");
+
+    this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
+
     /* Threads */
     this->state_thread = std::thread([this]() {
         rclcpp::Rate rate(10);
@@ -51,6 +66,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     });
     this->state_thread.detach();
 
+
+
 }
 RaceDirector::~RaceDirector(){
     if (this->state_thread.joinable()) {
@@ -58,8 +75,29 @@ RaceDirector::~RaceDirector(){
     }
 }
 
-void RaceDirector::acu_state_callback(const lart_msgs::msg::State::SharedPtr msg) {
-    auto received_state = msg->data;
+void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
+    this->asms_state = msg->asms;
+    if (this->asms_state == 0){
+        return;
+    }
+
+    //start recording bag if ign is 1, stop recording if ign is 0
+    if (msg->ign == 1){
+        if (!this->bag_recording){
+            auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+            this->start_bag_recording_client->async_send_request(request);
+            this->bag_recording = true;
+        }
+    }else{
+        if (this->bag_recording){
+            auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+            this->stop_bag_recording_client->async_send_request(request);
+            this->bag_recording = false;
+        }
+    }
+
+    auto received_state = msg->as_state;
+
     if (received_state == current_state) {
         return;
     }
@@ -69,32 +107,31 @@ void RaceDirector::acu_state_callback(const lart_msgs::msg::State::SharedPtr msg
             RCLCPP_INFO(this->get_logger(), "State changed to OFF");
             this->change_state(lart_msgs::msg::State::OFF);
             break;
-
         case lart_msgs::msg::State::READY:
             RCLCPP_INFO(this->get_logger(), "State changed to READY");
             this->ready_change = std::chrono::steady_clock::now();
             this->ready_change_set = true;
             this->change_state(lart_msgs::msg::State::READY);
             break;
-        case lart_msgs::msg::State::DRIVING:{
-            if (!this->ready_change_set)
-                break;
-            std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
-            if ( current_state == lart_msgs::msg::State::READY && time_in_ready > std::chrono::seconds(6)) {
-                RCLCPP_INFO(this->get_logger(), "State changed to DRIVING");
-                this->change_state(lart_msgs::msg::State::DRIVING);
-            } else {
-                RCLCPP_WARN(this->get_logger(), "Cannot change to DRIVING, not in READY state");
-                return;
-            }
-            break;
-        }
         case lart_msgs::msg::State::EMERGENCY:
             RCLCPP_INFO(this->get_logger(), "State changed to EMERGENCY");
             this->change_state(lart_msgs::msg::State::EMERGENCY);
             break;
     }
+}
 
+void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
+    int res_signal = msg->signal;
+    if (this->current_state == lart_msgs::msg::State::READY){
+        std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
+        if((res_signal == 5 || res_signal == 7) && time_in_ready > std::chrono::seconds(6)) {
+            this->change_state(lart_msgs::msg::State::DRIVING);
+        }
+    }
+
+    if (res_signal == 0){
+        this->change_state(lart_msgs::msg::State::EMERGENCY);
+    }
 }
 
 void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr msg){
@@ -110,6 +147,43 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
             this->change_state(lart_msgs::msg::State::EMERGENCY);
         break;
     }
+}
+
+void RaceDirector::mission_callback(const lart_msgs::msg::Mission::SharedPtr msg){
+    //Get jetson temperature
+    std::ifstream temp_file("/sys/devices/virtual/thermal/thermal_zone1/temp");
+    int temp;
+    temp_file >> temp;
+    float final_temp = temp / 1000.0 ;
+
+    //Get CPU usage
+
+
+    //Get GPU usage
+
+
+    lart_msgs::msg::Jetson jetson_msg;
+    jetson_msg.header.stamp = this->now();
+    jetson_msg.as_mission = msg->data;
+    jetson_msg.as_state = this->current_state;
+    jetson_msg.temperature = static_cast<int8_t>(final_temp);
+    jetson_msg.cpu = 0;
+    jetson_msg.gpu = 0;
+
+    this->jetson_publisher->publish(jetson_msg);
+}
+
+void RaceDirector::slam_callback(const lart_msgs::msg::SlamStats::SharedPtr msg){
+    this->slam_stats_can_msg.lap_counter = msg->lap_count;
+    this->slam_stats_can_msg.cones_count_actual = msg->cones_count_current;
+    this->slam_stats_can_msg.cones_count_all = msg->cones_count_all;
+}
+
+void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& acc_msg, 
+                            const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& gyro_msg){
+    this->dv_dynamics2_msg.acceleration_longitudinal = acc_msg->vector.x;
+    this->dv_dynamics2_msg.acceleration_lateral= acc_msg->vector.y;
+    this->dv_dynamics2_msg.yaw_rate = gyro_msg->vector.z;
 }
 
 #pragma region Steering Service
@@ -180,6 +254,16 @@ void RaceDirector::send_state_to_nodes() {
     }
 
     this->state_publisher->publish(msg);
+}
+
+void RaceDirector::send_handbook_msgs() {
+    this->dv_dynamics1_msg.header.stamp = this->now();
+    this->dv_dynamics2_msg.header.stamp = this->now();
+    this->slam_stats_can_msg.header.stamp = this->now();
+
+    this->dv_dynamics1_publisher->publish(this->dv_dynamics1_msg);
+    this->dv_dynamics2_publisher->publish(this->dv_dynamics2_msg);
+    this->slam_stats_can_publisher->publish(this->slam_stats_can_msg);
 }
 
 int main(int argc, char *argv[])
