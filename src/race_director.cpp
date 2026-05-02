@@ -27,30 +27,20 @@ RaceDirector::RaceDirector() : Node("race_director"){
     //sync imu acc and gyro subs
     imu_sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
     imu_sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
+
+    this->cubemars_feedback_subscriber = this->create_subscription<lart_msgs::msg::CubemarsFeedback>("/cubemars/feedback", 10, std::bind(&RaceDirector::cubemars_feedback_callback, this, _1));
     
     /* Services */
     if (!is_unit_test){
-        this->steering_timestamp = this->create_client<lart_msgs::srv::Heartbeat>("steering/last_timestamp");
-    
-        while (!this->steering_timestamp->wait_for_service(std::chrono::seconds(1))) {
-            if (!rclcpp::ok()) {
-                RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for steering/last_timestamp service.");
-                return;
-            }
-            RCLCPP_INFO(this->get_logger(), "Waiting for steering/last_timestamp service...");
-        }
-    
-        this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_steering_timestamp, this));
-    
         this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>("zed/last_timestamp");
         
-        while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
-            if (!rclcpp::ok()) {
-                RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
-                return;
-            }
-            RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
-        }
+        // while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
+        //     if (!rclcpp::ok()) {
+        //         RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
+        //         return;
+        //     }
+        //     RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
+        // }
         this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     }
 
@@ -58,7 +48,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>("/stop_recording");
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-
+    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
+    
     /* Threads */
     this->state_thread = std::thread([this]() {
         rclcpp::Rate rate(10);
@@ -68,8 +59,6 @@ RaceDirector::RaceDirector() : Node("race_director"){
         }
     });
     this->state_thread.detach();
-
-
 
 }
 RaceDirector::~RaceDirector(){
@@ -101,7 +90,7 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
 
     auto received_state = msg->as_state;
 
-    if (received_state == current_state) {
+    if (received_state == this->get_current_state()) {
         return;
     }
 
@@ -119,13 +108,14 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
         case lart_msgs::msg::State::EMERGENCY:
             RCLCPP_INFO(this->get_logger(), "State changed to EMERGENCY");
             this->change_state(lart_msgs::msg::State::EMERGENCY);
+            this->emergency_cause =lart_msgs::msg::Jetson::ACU_EMERGENCY;
             break;
     }
 }
 
 void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
     int res_signal = msg->signal;
-    if (this->current_state == lart_msgs::msg::State::READY){
+    if (this->get_current_state() == lart_msgs::msg::State::READY){
         std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
         if((res_signal == 5 || res_signal == 7) && time_in_ready > std::chrono::seconds(6)) {
             this->change_state(lart_msgs::msg::State::DRIVING);
@@ -134,20 +124,23 @@ void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
 
     if (res_signal == 0){
         this->change_state(lart_msgs::msg::State::EMERGENCY);
+        this->emergency_cause =lart_msgs::msg::Jetson::RES_EMERGENCY;
     }
 }
 
 void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr msg){
-    if (current_state == lart_msgs::msg::State::EMERGENCY) return; // if the current state is emergency it is not possible to change
+    int current_state_var = this->get_current_state();
+    if (current_state_var == lart_msgs::msg::State::EMERGENCY) return; // if the current state is emergency it is not possible to change
     
     auto received_state = msg->data;
     switch (received_state){
         case lart_msgs::msg::State::FINISH:
-            if (current_state == lart_msgs::msg::State::DRIVING)
+            if (current_state_var == lart_msgs::msg::State::DRIVING)
                 this->change_state(lart_msgs::msg::State::FINISH);
         break;
             case lart_msgs::msg::State::EMERGENCY:
             this->change_state(lart_msgs::msg::State::EMERGENCY);
+            //TODO: Figure out a way to know which node caused the emergency
         break;
     }
 }
@@ -168,10 +161,11 @@ void RaceDirector::mission_callback(const lart_msgs::msg::Mission::SharedPtr msg
     lart_msgs::msg::Jetson jetson_msg;
     jetson_msg.header.stamp = this->now();
     jetson_msg.as_mission = msg->data;
-    jetson_msg.as_state = this->current_state;
+    jetson_msg.as_state = this->get_current_state();
     jetson_msg.temperature = static_cast<int8_t>(final_temp);
     jetson_msg.cpu = 0;
     jetson_msg.gpu = 0;
+    jetson_msg.emergency_cause = this->emergency_cause;
 
     this->jetson_publisher->publish(jetson_msg);
 }
@@ -193,6 +187,11 @@ void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr
     float angle = msg->steering_angle;
     float sw_angle = -61.6073*pow(angle, 4)+449.05708*pow(angle, 3)+16.71117*pow(angle, 2)+156.50789*angle;
     float rel_current = msg->acc_cmd*100;
+
+    if (abs(sw_angle) > 110 || rel_current < -40 || rel_current > 90){
+    RCLCPP_ERROR(this->get_logger(), "Commands out of bounds- steering:%f, rel_current:%f", sw_angle, rel_current);
+        return;
+    }
     
     this->dv_dynamics1_msg.steering_angle_target = sw_angle;
     this->dv_dynamics1_msg.steering_angle_actual = 0.0;
@@ -211,36 +210,32 @@ void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr
 
     lart_msgs::msg::CubemarsPositionLoop cubemars_msg;
     cubemars_msg.header.stamp = this->now();
-    cubemars_msg.steering_angle_target = sw_angle;
+    cubemars_msg.position = sw_angle;
     this->cubemars_position_loop_publisher->publish(cubemars_msg);
 
-
 }
 
-#pragma region Steering Service
-
-void RaceDirector::request_steering_timestamp(){
-    auto request = std::make_shared<lart_msgs::srv::Heartbeat::Request>();
-    auto future = this->steering_timestamp->async_send_request(
-        request,
-        std::bind(&RaceDirector::handle_steering_timestamp_response, this, _1));
+void RaceDirector::cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg){
+    this->dv_dynamics1_msg.steering_angle_actual = msg->position;
+    if (msg->error_code != 0){
+        RCLCPP_ERROR(this->get_logger(), "Cubemars error code: %d", msg->error_code);
+        this->change_state(lart_msgs::msg::State::EMERGENCY);
+        this->emergency_cause =lart_msgs::msg::Jetson::STEERING_EMERGENCY;
+    }
+    this->last_steering_timestamp = std::chrono::steady_clock::now();
 }
 
-void RaceDirector::handle_steering_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future){
-    try {
-        auto response = future.get();
-        auto last_steering_timestamp = response->timestamp;
-        auto now = this->now();
-
-        if ((now - last_steering_timestamp).seconds() > TIMESTAMP_MARGIN) {
-            this->change_state(lart_msgs::msg::State::EMERGENCY);
-        }
-        
-    } catch (const std::exception &e) {
-        RCLCPP_ERROR(this->get_logger(), "Service call failed: %s", e.what());
+void RaceDirector::check_steering_timestamp(){
+    if(!this->asms_state || this->last_steering_timestamp.time_since_epoch().count() == 0)
+        return;
+    auto now = std::chrono::steady_clock::now();
+    std::chrono::duration<double> time_since_last_steering = now - this->last_steering_timestamp;
+    if (time_since_last_steering.count() > TIMESTAMP_MARGIN) {
+        RCLCPP_ERROR(this->get_logger(), "Steering feedback timestamp is too old: %f seconds", time_since_last_steering.count());
+        this->change_state(lart_msgs::msg::State::EMERGENCY);
+        this->emergency_cause =lart_msgs::msg::Jetson::STEERING_EMERGENCY;
     }
 }
-#pragma endregion
 
 #pragma region Perception Service
 void RaceDirector::request_perception_timestamp(){
@@ -258,6 +253,7 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<lart_msgs
 
         if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
             this->change_state(lart_msgs::msg::State::EMERGENCY);
+            this->emergency_cause = lart_msgs::msg::Jetson::ZED_EMERGENCY;
         }
         
     } catch (const std::exception &e) {
@@ -267,6 +263,7 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<lart_msgs
 #pragma endregion
 
 int RaceDirector::get_current_state(){
+    std::lock_guard<std::mutex> lock(state_mutex);
     return this->current_state;
 }
 
@@ -281,11 +278,8 @@ void RaceDirector::change_state(int new_state) {
 void RaceDirector::send_state_to_nodes() {
     lart_msgs::msg::State msg;
     msg.header.stamp = this->now();
-
-    {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        msg.data = this->current_state;
-    }
+    msg.data = this->get_current_state();
+    RCLCPP_INFO(this->get_logger(), "Publishing state: %d", msg.data);
 
     this->state_publisher->publish(msg);
 }
@@ -302,9 +296,9 @@ void RaceDirector::send_handbook_msgs() {
 
 int main(int argc, char *argv[])
 {
-        rclcpp::init(argc, argv);
-        rclcpp::spin(std::make_shared<RaceDirector>());
-        rclcpp::shutdown();
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<RaceDirector>());
+    rclcpp::shutdown();
 
     return 0;
 }

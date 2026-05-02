@@ -27,12 +27,11 @@
 #include "lart_msgs/msg/dv_dynamics2.hpp"
 #include "lart_msgs/msg/slam_stats_can.hpp"
 #include "lart_msgs/msg/cubemars_position_loop.hpp"
+#include "lart_msgs/msg/cubemars_feedback.hpp"
 #include "lart_msgs/msg/vcu_torque_target.hpp"
 
 
-
-
-#define TIMESTAMP_MARGIN 3.0 // seconds
+#define TIMESTAMP_MARGIN 1.0 // seconds
 
 using namespace std::placeholders;
 
@@ -50,10 +49,13 @@ class RaceDirector : public rclcpp::Node {
     /* Variables*/
         int current_state = lart_msgs::msg::State::OFF;
         std::chrono::steady_clock::time_point ready_change;
+        std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;
 
         int asms_state = 0;
+
+        int emergency_cause = lart_msgs::msg::Jetson::NO_EMERGENCY;
 
         lart_msgs::msg::Jetson jetson_msg;
 
@@ -84,16 +86,15 @@ class RaceDirector : public rclcpp::Node {
         
         void control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg);
 
+        void cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg);
+
         void change_state(int new_state);
 
         void send_state_to_nodes();
 
         void send_handbook_msgs();
 
-        /* Steering Service Related*/
-        void request_steering_timestamp();
-
-        void handle_steering_timestamp_response(rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedFuture future);
+        void check_steering_timestamp();
 
         /* Perception Service Related*/
         void request_perception_timestamp();
@@ -127,6 +128,7 @@ class RaceDirector : public rclcpp::Node {
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_gyro_sub_;
         std::shared_ptr<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>> imu_sync_;
         rclcpp::Subscription<lart_msgs::msg::DynamicsCMD>::SharedPtr dynamics_subscriber;
+        rclcpp::Subscription<lart_msgs::msg::CubemarsFeedback>::SharedPtr cubemars_feedback_subscriber;
 
 };
 #endif //RACE_DIRECTOR_HPP
