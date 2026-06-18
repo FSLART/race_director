@@ -11,6 +11,7 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
 #include "lart_common.h"
+#include "topics.h"
 
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 
@@ -55,7 +56,7 @@ class RaceDirector : public rclcpp::Node {
 
         int asms_state = 0;
 
-        int emergency_cause = lart_msgs::msg::Jetson::NO_EMERGENCY;
+        int emergency_cause = lart_msgs::msg::Jetson::EMERGENCY_CAUSE_NONE;
 
         lart_msgs::msg::Jetson jetson_msg;
 

@@ -8,31 +8,33 @@ RaceDirector::RaceDirector() : Node("race_director"){
     }
 
     /* Publishers*/
-    this->state_publisher = this->create_publisher<lart_msgs::msg::State>("/state", 10);
-    this->jetson_publisher = this->create_publisher<lart_msgs::msg::Jetson>("/jetson", 10);
-    this->slam_stats_can_publisher = this->create_publisher<lart_msgs::msg::SlamStatsCan>("/dv/slam_stats", 10);
-    this->dv_dynamics1_publisher = this->create_publisher<lart_msgs::msg::DvDynamics1>("/dv/dynamics1", 10);
-    this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>("/dv/dynamics2", 10);
-    this->cubemars_position_loop_publisher = this->create_publisher<lart_msgs::msg::CubemarsPositionLoop>("/cubemars/position_loop", 10);
-    this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>("/vcu/torque_target", 10);
+    this->state_publisher = this->create_publisher<lart_msgs::msg::State>(TOPIC_STATE_PC, 10);
+    this->jetson_publisher = this->create_publisher<lart_msgs::msg::Jetson>(TOPIC_JETSON, 10);
+    this->slam_stats_can_publisher = this->create_publisher<lart_msgs::msg::SlamStatsCan>(TOPIC_DV_SLAM_STATS, 10);
+    this->dv_dynamics1_publisher = this->create_publisher<lart_msgs::msg::DvDynamics1>(TOPIC_DV_DYNAMICS1, 10);
+    this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>(TOPIC_DV_DYNAMICS2, 10);
+    this->cubemars_position_loop_publisher = this->create_publisher<lart_msgs::msg::CubemarsPositionLoop>(TOPIC_CUBEMARS_POSITION_LOOP, 10);
+    this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>(TOPIC_CONTROL_TORQUE_TARGET, 10);
 
     /* Subscribers */
-    this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>("/acu", 10, std::bind(&RaceDirector::acu_callback, this, _1));
-    this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>("/res", 10, std::bind(&RaceDirector::res_callback, this, _1));
-    this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>("/state/nodes", 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
-    this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>("/mission", 10, std::bind(&RaceDirector::mission_callback, this, _1));
-    imu_acc_sub_.subscribe(this, "/imu/acceleration");
-    imu_gyro_sub_.subscribe(this, "/imu/angular_velocity");
+    this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>(TOPIC_CAN_ACU, 10, std::bind(&RaceDirector::acu_callback, this, _1));
+    this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>(TOPIC_CAN_RES, 10, std::bind(&RaceDirector::res_callback, this, _1));
+    this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>(TOPIC_STATE_NODES, 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
+    this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>(TOPIC_MISSION_PC, 10, std::bind(&RaceDirector::mission_callback, this, _1));
+    imu_acc_sub_.subscribe(this, TOPIC_IMU_ACCELERATION);
+    imu_gyro_sub_.subscribe(this, TOPIC_IMU_ANGULAR_VELOCITY);
+
+    this->dynamics_subscriber = this->create_subscription<lart_msgs::msg::DynamicsCMD>(TOPIC_CONTROL_TORQUE_TARGET, 10, std::bind(&RaceDirector::control_callback, this, _1));
     
     //sync imu acc and gyro subs
     imu_sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
     imu_sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
 
-    this->cubemars_feedback_subscriber = this->create_subscription<lart_msgs::msg::CubemarsFeedback>("/cubemars/feedback", 10, std::bind(&RaceDirector::cubemars_feedback_callback, this, _1));
+    this->cubemars_feedback_subscriber = this->create_subscription<lart_msgs::msg::CubemarsFeedback>(TOPIC_CAN_CUBEMARS_FEEDBACK, 10, std::bind(&RaceDirector::cubemars_feedback_callback, this, _1));
     
     /* Services */
     if (!is_unit_test){
-        this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>("zed/last_timestamp");
+        this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>(SERVICE_ZED_TIMESTAMP);
         
         // while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
         //     if (!rclcpp::ok()) {
@@ -44,8 +46,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
         this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     }
 
-    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>("/start_recording");
-    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>("/stop_recording");
+    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
+    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
     this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
@@ -108,7 +110,7 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
         case lart_msgs::msg::State::EMERGENCY:
             RCLCPP_INFO(this->get_logger(), "State changed to EMERGENCY");
             this->change_state(lart_msgs::msg::State::EMERGENCY);
-            this->emergency_cause =lart_msgs::msg::Jetson::ACU_EMERGENCY;
+            this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ACU;
             break;
     }
 }
@@ -124,7 +126,7 @@ void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
 
     if (res_signal == 0){
         this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::RES_EMERGENCY;
+        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_RES;
     }
 }
 
@@ -185,10 +187,10 @@ void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stampe
 
 void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
     float angle = msg->steering_angle;
-    float sw_angle = -61.6073*pow(angle, 4)+449.05708*pow(angle, 3)+16.71117*pow(angle, 2)+156.50789*angle;
+    float sw_angle = -49.3021*std::pow(angle,3)+90.5065*std::pow(angle,2)+312.5504*angle;
     float rel_current = msg->acc_cmd*100;
 
-    if (abs(sw_angle) > 110 || rel_current < -40 || rel_current > 90){
+    if (abs(sw_angle) > 110 || rel_current < -100 || rel_current > 100){
     RCLCPP_ERROR(this->get_logger(), "Commands out of bounds- steering:%f, rel_current:%f", sw_angle, rel_current);
         return;
     }
@@ -220,7 +222,7 @@ void RaceDirector::cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeed
     if (msg->error_code != 0){
         RCLCPP_ERROR(this->get_logger(), "Cubemars error code: %d", msg->error_code);
         this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::STEERING_EMERGENCY;
+        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_ERROR;
     }
     this->last_steering_timestamp = std::chrono::steady_clock::now();
 }
@@ -233,7 +235,7 @@ void RaceDirector::check_steering_timestamp(){
     if (time_since_last_steering.count() > TIMESTAMP_MARGIN) {
         RCLCPP_ERROR(this->get_logger(), "Steering feedback timestamp is too old: %f seconds", time_since_last_steering.count());
         this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::STEERING_EMERGENCY;
+        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_TIMEOUT;
     }
 }
 
@@ -253,7 +255,7 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<lart_msgs
 
         if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
             this->change_state(lart_msgs::msg::State::EMERGENCY);
-            this->emergency_cause = lart_msgs::msg::Jetson::ZED_EMERGENCY;
+            this->emergency_cause = lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ZED;
         }
         
     } catch (const std::exception &e) {
