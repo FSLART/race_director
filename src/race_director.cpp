@@ -14,7 +14,7 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->dv_dynamics1_publisher = this->create_publisher<lart_msgs::msg::DvDynamics1>(TOPIC_DV_DYNAMICS1, 10);
     this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>(TOPIC_DV_DYNAMICS2, 10);
     this->cubemars_position_loop_publisher = this->create_publisher<lart_msgs::msg::CubemarsPositionLoop>(TOPIC_CUBEMARS_POSITION_LOOP, 10);
-    this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>(TOPIC_CONTROL_TORQUE_TARGET, 10);
+    this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>(TOPIC_VCU_TORQUE_TARGET, 10);
 
     /* Subscribers */
     this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>(TOPIC_CAN_ACU, 10, std::bind(&RaceDirector::acu_callback, this, _1));
