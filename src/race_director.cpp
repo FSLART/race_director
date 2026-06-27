@@ -15,17 +15,21 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->dv_dynamics2_publisher = this->create_publisher<lart_msgs::msg::DvDynamics2>(TOPIC_DV_DYNAMICS2, 10);
     this->cubemars_position_loop_publisher = this->create_publisher<lart_msgs::msg::CubemarsPositionLoop>(TOPIC_CUBEMARS_POSITION_LOOP, 10);
     this->vcu_torque_target_publisher = this->create_publisher<lart_msgs::msg::VcuTorqueTarget>(TOPIC_VCU_TORQUE_TARGET, 10);
+    this->vcu_rpm_target_publisher = this->create_publisher<lart_msgs::msg::VcuRpmTarget>(TOPIC_VCU_RPM_TARGET, 10);
+    this->control_feedback_publisher = this->create_publisher<lart_msgs::msg::Dynamics>(TOPIC_CONTROL_FEEDBACK, 10);
 
     /* Subscribers */
     this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>(TOPIC_CAN_ACU, 10, std::bind(&RaceDirector::acu_callback, this, _1));
+    this->vcu_rpm_subscriber = this->create_subscription<lart_msgs::msg::VcuRpm>(TOPIC_CAN_VCU_RPM, 10, std::bind(&RaceDirector::vcu_control_feedback_callback, this, _1));
     this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>(TOPIC_CAN_RES, 10, std::bind(&RaceDirector::res_callback, this, _1));
     this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>(TOPIC_STATE_NODES, 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
     this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>(TOPIC_MISSION_PC, 10, std::bind(&RaceDirector::mission_callback, this, _1));
     imu_acc_sub_.subscribe(this, TOPIC_IMU_ACCELERATION);
     imu_gyro_sub_.subscribe(this, TOPIC_IMU_ANGULAR_VELOCITY);
 
-    this->dynamics_subscriber = this->create_subscription<lart_msgs::msg::DynamicsCMD>(TOPIC_CONTROL_TORQUE_TARGET, 10, std::bind(&RaceDirector::control_callback, this, _1));
-    
+    this->control_torque_subscriber = this->create_subscription<lart_msgs::msg::DynamicsCMD>(TOPIC_CONTROL_TORQUE_TARGET, 10, std::bind(&RaceDirector::torque_control_callback, this, _1));
+    this->control_rpm_subscriber = this->create_subscription<lart_msgs::msg::DynamicsCMD>(TOPIC_CONTROL_RPM_TARGET, 10, std::bind(&RaceDirector::rpm_control_callback, this, _1));
+
     //sync imu acc and gyro subs
     imu_sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
     imu_sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
@@ -113,7 +117,21 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
             this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ACU;
             break;
     }
+
 }
+
+void RaceDirector::vcu_control_feedback_callback(const lart_msgs::msg::VcuRpm::SharedPtr msg){
+    lart_msgs::msg::Dynamics control_feedback_msg;
+    control_feedback_msg.header.stamp = this->now();
+    control_feedback_msg.steering_angle = dv_dynamics1_msg.steering_angle_actual;
+    control_feedback_msg.rpm = (msg->motor_rpm_left + msg->motor_rpm_right) / 2.0;
+
+    this->dv_dynamics1_msg.speed_actual = RPM_TO_MS((msg->motor_rpm_left + msg->motor_rpm_right) / 2.0);
+    this->dv_dynamics1_msg.motor_moment_actual = (msg->motor_current_left + msg->motor_current_right) / 2.0;//meter em percentagem
+
+    this->control_feedback_publisher->publish(control_feedback_msg);
+}
+
 
 void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
     int res_signal = msg->signal;
@@ -178,20 +196,19 @@ void RaceDirector::slam_callback(const lart_msgs::msg::SlamStats::SharedPtr msg)
     this->slam_stats_can_msg.cones_count_all = msg->cones_count_all;
 }
 
-void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& acc_msg, 
-                            const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& gyro_msg){
+void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& acc_msg, const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& gyro_msg){
     this->dv_dynamics2_msg.acceleration_longitudinal = acc_msg->vector.x;
     this->dv_dynamics2_msg.acceleration_lateral= acc_msg->vector.y;
     this->dv_dynamics2_msg.yaw_rate = gyro_msg->vector.z;
 }
 
-void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
+void RaceDirector::torque_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
     float angle = msg->steering_angle;
     float sw_angle = -49.3021*std::pow(angle,3)+90.5065*std::pow(angle,2)+312.5504*angle;
     float rel_current = msg->acc_cmd*100;
 
-    if (abs(sw_angle) > 110 || rel_current < -100 || rel_current > 100){
-    RCLCPP_ERROR(this->get_logger(), "Commands out of bounds- steering:%f, rel_current:%f", sw_angle, rel_current);
+    if (abs(sw_angle) > MAX_STEERING_ANGLE_DEG || abs(rel_current) > 100){
+        RCLCPP_ERROR(this->get_logger(), "Commands out of bounds- steering:%f, rel_current:%f", sw_angle, rel_current);
         return;
     }
     
@@ -215,6 +232,37 @@ void RaceDirector::control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr
     cubemars_msg.position = sw_angle;
     this->cubemars_position_loop_publisher->publish(cubemars_msg);
 
+}
+
+void RaceDirector::rpm_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
+    float angle = msg->steering_angle;
+    float sw_angle = -49.3021*std::pow(angle,3)+90.5065*std::pow(angle,2)+312.5504*angle;
+    float rpm = msg->rpm;
+
+    if (abs(sw_angle) > MAX_STEERING_ANGLE_DEG || rpm < 0 || rpm > 20000){
+        RCLCPP_ERROR(this->get_logger(), "Commands out of bounds- steering:%f, rpm:%f", sw_angle, rpm);
+        return;
+    }
+    
+    this->dv_dynamics1_msg.steering_angle_target = sw_angle;
+    this->dv_dynamics1_msg.steering_angle_actual = 0.0;
+    this->dv_dynamics1_msg.speed_target = RPM_TO_MS(rpm);
+    this->dv_dynamics1_msg.speed_actual = 0.0;
+    this->dv_dynamics1_msg.brake_hydr_target = 0.0;
+    this->dv_dynamics1_msg.brake_hydr_actual = 0.0;
+    this->dv_dynamics1_msg.motor_moment_target = 0.0;
+    this->dv_dynamics1_msg.motor_moment_actual = 0.0;
+
+    //prepare control commands for vcu and cubemars
+    lart_msgs::msg::VcuRpmTarget vcu_msg;
+    vcu_msg.header.stamp = this->now();
+    vcu_msg.rpm_target = rpm;
+    this->vcu_rpm_target_publisher->publish(vcu_msg);
+
+    lart_msgs::msg::CubemarsPositionLoop cubemars_msg;
+    cubemars_msg.header.stamp = this->now();
+    cubemars_msg.position = sw_angle;
+    this->cubemars_position_loop_publisher->publish(cubemars_msg);
 }
 
 void RaceDirector::cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg){
@@ -281,7 +329,7 @@ void RaceDirector::send_state_to_nodes() {
     lart_msgs::msg::State msg;
     msg.header.stamp = this->now();
     msg.data = this->get_current_state();
-    RCLCPP_INFO(this->get_logger(), "Publishing state: %d", msg.data);
+    // RCLCPP_INFO(this->get_logger(), "Publishing state: %d", msg.data);
 
     this->state_publisher->publish(msg);
 }

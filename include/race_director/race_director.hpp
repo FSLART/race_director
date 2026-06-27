@@ -18,10 +18,12 @@
 #include "lart_msgs/msg/state.hpp"
 #include "lart_msgs/msg/mission.hpp"
 #include "lart_msgs/msg/dynamics_cmd.hpp"
+#include "lart_msgs/msg/dynamics.hpp"
 #include "lart_msgs/msg/slam_stats.hpp"
 #include "lart_msgs/srv/heartbeat.hpp"
 
 #include "lart_msgs/msg/acu.hpp"
+#include "lart_msgs/msg/vcu_rpm.hpp"
 #include "lart_msgs/msg/res.hpp"
 #include "lart_msgs/msg/jetson.hpp"
 #include "lart_msgs/msg/dv_dynamics1.hpp"
@@ -30,6 +32,7 @@
 #include "lart_msgs/msg/cubemars_position_loop.hpp"
 #include "lart_msgs/msg/cubemars_feedback.hpp"
 #include "lart_msgs/msg/vcu_torque_target.hpp"
+#include "lart_msgs/msg/vcu_rpm_target.hpp"
 
 
 #define TIMESTAMP_MARGIN 1.0 // seconds
@@ -49,6 +52,7 @@ class RaceDirector : public rclcpp::Node {
 
     /* Variables*/
         int current_state = lart_msgs::msg::State::OFF;
+        int current_mission = lart_msgs::msg::Mission::MANUAL;
         std::chrono::steady_clock::time_point ready_change;
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
@@ -74,6 +78,8 @@ class RaceDirector : public rclcpp::Node {
 
     /* Functions */
 
+        void vcu_control_feedback_callback(const lart_msgs::msg::VcuRpm::SharedPtr msg);
+
         void res_callback(const lart_msgs::msg::Res::SharedPtr msg);
 
         void nodes_state_callback(const lart_msgs::msg::State::SharedPtr msg);
@@ -85,7 +91,9 @@ class RaceDirector : public rclcpp::Node {
         void combined_imu_callback(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& acc_msg, 
                             const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr& gyro_msg);
         
-        void control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg);
+        void torque_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg);
+
+        void rpm_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg);
 
         void cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg);
 
@@ -118,17 +126,21 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Publisher<lart_msgs::msg::DvDynamics2>::SharedPtr dv_dynamics2_publisher;
         rclcpp::Publisher<lart_msgs::msg::CubemarsPositionLoop>::SharedPtr cubemars_position_loop_publisher;
         rclcpp::Publisher<lart_msgs::msg::VcuTorqueTarget>::SharedPtr vcu_torque_target_publisher;
+        rclcpp::Publisher<lart_msgs::msg::VcuRpmTarget>::SharedPtr vcu_rpm_target_publisher;
+        rclcpp::Publisher<lart_msgs::msg::Dynamics>::SharedPtr control_feedback_publisher;
         
         /* Subscribers */
         rclcpp::Subscription<lart_msgs::msg::Mission>::SharedPtr mission_subscriber;
         rclcpp::Subscription<lart_msgs::msg::Acu>::SharedPtr acu_subscriber;
+        rclcpp::Subscription<lart_msgs::msg::VcuRpm>::SharedPtr vcu_rpm_subscriber;
         rclcpp::Subscription<lart_msgs::msg::Res>::SharedPtr res_subscriber;
         rclcpp::Subscription<lart_msgs::msg::SlamStats>::SharedPtr slam_subscriber;
         rclcpp::Subscription<lart_msgs::msg::State>::SharedPtr nodes_state_subscriber;
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_acc_sub_;
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_gyro_sub_;
         std::shared_ptr<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>> imu_sync_;
-        rclcpp::Subscription<lart_msgs::msg::DynamicsCMD>::SharedPtr dynamics_subscriber;
+        rclcpp::Subscription<lart_msgs::msg::DynamicsCMD>::SharedPtr control_torque_subscriber;
+        rclcpp::Subscription<lart_msgs::msg::DynamicsCMD>::SharedPtr control_rpm_subscriber;
         rclcpp::Subscription<lart_msgs::msg::CubemarsFeedback>::SharedPtr cubemars_feedback_subscriber;
 
 };
