@@ -54,6 +54,7 @@ class RaceDirector : public rclcpp::Node {
         int current_state = lart_msgs::msg::State::OFF;
         int current_mission = lart_msgs::msg::Mission::MANUAL;
         std::chrono::steady_clock::time_point ready_change;
+        std::chrono::steady_clock::time_point last_state_change;
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;

@@ -37,24 +37,24 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->cubemars_feedback_subscriber = this->create_subscription<lart_msgs::msg::CubemarsFeedback>(TOPIC_CAN_CUBEMARS_FEEDBACK, 10, std::bind(&RaceDirector::cubemars_feedback_callback, this, _1));
     
     /* Services */
-    if (!is_unit_test){
-        this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>(SERVICE_ZED_TIMESTAMP);
+    // if (!is_unit_test){
+    //     this->perception_timestamp = this->create_client<lart_msgs::srv::Heartbeat>(SERVICE_ZED_TIMESTAMP);
         
-        // while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
-        //     if (!rclcpp::ok()) {
-        //         RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
-        //         return;
-        //     }
-        //     RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
-        // }
-        this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
-    }
+    //     // while (!this->perception_timestamp->wait_for_service(std::chrono::seconds(1))) {
+    //     //     if (!rclcpp::ok()) {
+    //     //         RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for zed/last_timestamp service.");
+    //     //         return;
+    //     //     }
+    //     //     RCLCPP_INFO(this->get_logger(), "Waiting for zed/last_timestamp service...");
+    //     // }
+    //     this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
+    // }
 
     this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
     this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
+    // this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
     
     /* Threads */
     this->state_thread = std::thread([this]() {
@@ -135,10 +135,12 @@ void RaceDirector::vcu_control_feedback_callback(const lart_msgs::msg::VcuRpm::S
 
 void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
     int res_signal = msg->signal;
-    if (this->get_current_state() == lart_msgs::msg::State::READY){
-        std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
-        if((res_signal == 5 || res_signal == 7) && time_in_ready > std::chrono::seconds(6)) {
-            this->change_state(lart_msgs::msg::State::DRIVING);
+    if(this->ready_change_set){
+        if (this->get_current_state() == lart_msgs::msg::State::READY){
+            std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
+            if((res_signal == 5 || res_signal == 7) && time_in_ready > std::chrono::seconds(6)) {
+                this->change_state(lart_msgs::msg::State::DRIVING);
+            }
         }
     }
 
@@ -319,10 +321,19 @@ int RaceDirector::get_current_state(){
 
 void RaceDirector::change_state(int new_state) {
     std::lock_guard<std::mutex> lock(state_mutex);
+    auto now = std::chrono::steady_clock::now();
+    if(new_state == lart_msgs::msg::State::EMERGENCY){
+        this->current_state = new_state;
+    }
+
+    std::chrono::duration<double> time_in_state = std::chrono::steady_clock::now() - this->last_state_change;
+    if(time_in_state < std::chrono::seconds(1))
+        return;
     if(this->current_state == lart_msgs::msg::State::EMERGENCY){
         return;
     }
     this->current_state = new_state;
+    this->last_state_change = std::chrono::steady_clock::now();
 }
 
 void RaceDirector::send_state_to_nodes() {
