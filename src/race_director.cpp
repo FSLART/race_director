@@ -87,12 +87,11 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
             auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
             this->start_bag_recording_client->async_send_request(request);
             this->bag_recording = true;
+            this->bag_stop_timer.reset(); // allow a fresh delayed-stop to be scheduled for this session
         }
     }else{
         if (this->bag_recording){
-            auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-            this->stop_bag_recording_client->async_send_request(request);
-            this->bag_recording = false;
+            this->stop_bag_recording();
         }
     }
 
@@ -323,6 +322,7 @@ void RaceDirector::change_state(int new_state) {
     auto now = std::chrono::steady_clock::now();
     if(new_state == lart_msgs::msg::State::EMERGENCY){
         this->current_state = new_state;
+        this->schedule_bag_stop();
     }
 
     std::chrono::duration<double> time_in_state = std::chrono::steady_clock::now() - this->last_state_change;
@@ -333,6 +333,29 @@ void RaceDirector::change_state(int new_state) {
     }
     this->current_state = new_state;
     this->last_state_change = std::chrono::steady_clock::now();
+
+    if(new_state == lart_msgs::msg::State::FINISH){
+        this->schedule_bag_stop();
+    }
+}
+
+void RaceDirector::schedule_bag_stop() {
+    if (this->bag_stop_timer) {
+        return; // already scheduled for this recording session
+    }
+    this->bag_stop_timer = this->create_wall_timer(std::chrono::seconds(5), [this]() {
+        this->bag_stop_timer->cancel();
+        this->stop_bag_recording();
+    });
+}
+
+void RaceDirector::stop_bag_recording() {
+    if (!this->bag_recording) {
+        return;
+    }
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    this->stop_bag_recording_client->async_send_request(request);
+    this->bag_recording = false;
 }
 
 void RaceDirector::send_state_to_nodes() {

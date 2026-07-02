@@ -77,6 +77,7 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::TimerBase::SharedPtr steering_timestamp_timer;
         rclcpp::TimerBase::SharedPtr perception_timestamp_timer;
         rclcpp::TimerBase::SharedPtr send_jetson_msg_timer;
+        rclcpp::TimerBase::SharedPtr bag_stop_timer;
 
     /* Functions */
 
@@ -100,6 +101,10 @@ class RaceDirector : public rclcpp::Node {
         void cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg);
 
         void change_state(int new_state);
+
+        void schedule_bag_stop();
+
+        void stop_bag_recording();
 
         void send_state_to_nodes();
 
