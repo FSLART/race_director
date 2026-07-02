@@ -76,6 +76,7 @@ class RaceDirector : public rclcpp::Node {
 
         rclcpp::TimerBase::SharedPtr steering_timestamp_timer;
         rclcpp::TimerBase::SharedPtr perception_timestamp_timer;
+        rclcpp::TimerBase::SharedPtr send_jetson_msg_timer;
 
     /* Functions */
 

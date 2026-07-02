@@ -66,6 +66,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     });
     this->state_thread.detach();
 
+    this->send_jetson_msg_timer = this->create_wall_timer(std::chrono::duration<double>(0.02), [this]() { this->jetson_publisher->publish(this->jetson_msg); });
+
 }
 RaceDirector::~RaceDirector(){
     if (this->state_thread.joinable()) {
@@ -178,18 +180,15 @@ void RaceDirector::mission_callback(const lart_msgs::msg::Mission::SharedPtr msg
 
 
     //Get GPU usage
+    this->jetson_msg.header.stamp = this->now();
+    this->jetson_msg.as_mission = msg->data;
+    this->jetson_msg.as_state = this->get_current_state();
+    this->jetson_msg.temperature = static_cast<int8_t>(final_temp);
+    this->jetson_msg.cpu = 0;
+    this->jetson_msg.gpu = 0;
+    this->jetson_msg.emergency_cause = this->emergency_cause;
 
-
-    lart_msgs::msg::Jetson jetson_msg;
-    jetson_msg.header.stamp = this->now();
-    jetson_msg.as_mission = msg->data;
-    jetson_msg.as_state = this->get_current_state();
-    jetson_msg.temperature = static_cast<int8_t>(final_temp);
-    jetson_msg.cpu = 0;
-    jetson_msg.gpu = 0;
-    jetson_msg.emergency_cause = this->emergency_cause;
-
-    this->jetson_publisher->publish(jetson_msg);
+    // this->jetson_publisher->publish(this->jetson_msg);
 }
 
 void RaceDirector::slam_callback(const lart_msgs::msg::SlamStats::SharedPtr msg){
@@ -343,6 +342,8 @@ void RaceDirector::send_state_to_nodes() {
     // RCLCPP_INFO(this->get_logger(), "Publishing state: %d", msg.data);
 
     this->state_publisher->publish(msg);
+    // this->jetson_publisher->publish(this->jetson_msg);
+
 }
 
 void RaceDirector::send_handbook_msgs() {
