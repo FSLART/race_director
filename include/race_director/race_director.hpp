@@ -7,7 +7,8 @@
 #include <cstdlib> 
 #include <fstream>
 #include <rclcpp/rclcpp.hpp>
-#include <std_srvs/srv/trigger.hpp>
+#include <rosbag2_interfaces/srv/resume.hpp>
+#include <rosbag2_interfaces/srv/stop.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
 #include "lart_common.h"
@@ -122,8 +123,8 @@ class RaceDirector : public rclcpp::Node {
 
         rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr perception_timestamp;
 
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr start_bag_recording_client;
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stop_bag_recording_client;
+        rclcpp::Client<rosbag2_interfaces::srv::Resume>::SharedPtr start_bag_recording_client;
+        rclcpp::Client<rosbag2_interfaces::srv::Stop>::SharedPtr stop_bag_recording_client;
 
     /* Publishers */
         rclcpp::Publisher<lart_msgs::msg::State>::SharedPtr state_publisher;

@@ -50,8 +50,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     //     this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     // }
 
-    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
-    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
+    this->start_bag_recording_client = this->create_client<rosbag2_interfaces::srv::Resume>("/rosbag2_recorder/resume");
+    this->stop_bag_recording_client = this->create_client<rosbag2_interfaces::srv::Stop>("/rosbag2_recorder/stop");
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
     // this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
@@ -84,7 +84,8 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
     //start recording bag if ign is 1, stop recording if ign is 0
     if (msg->ign == 1){
         if (!this->bag_recording){
-            auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+            auto request = std::make_shared<rosbag2_interfaces::srv::Resume::Request>();
+            RCLCPP_INFO(this->get_logger(), "Calling start_bag_recording service");
             this->start_bag_recording_client->async_send_request(request);
             this->bag_recording = true;
             this->bag_stop_timer.reset(); // allow a fresh delayed-stop to be scheduled for this session
@@ -353,7 +354,8 @@ void RaceDirector::stop_bag_recording() {
     if (!this->bag_recording) {
         return;
     }
-    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    auto request = std::make_shared<rosbag2_interfaces::srv::Stop::Request>();
+    RCLCPP_INFO(this->get_logger(), "Calling stop_bag_recording service");
     this->stop_bag_recording_client->async_send_request(request);
     this->bag_recording = false;
 }
