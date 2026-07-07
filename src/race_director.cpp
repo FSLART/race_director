@@ -93,7 +93,7 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
         }
     }else{
         if (this->bag_recording){
-            this->stop_bag_recording();
+            this->schedule_bag_stop();
         }
     }
 
