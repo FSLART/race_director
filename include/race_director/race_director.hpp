@@ -4,10 +4,14 @@
 #include <cstdio>
 #include <chrono>
 #include <thread>
-#include <cstdlib> 
+#include <cstdlib>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+#include <csignal>
+#include <boost/process.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <std_srvs/srv/trigger.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
 #include "lart_common.h"
@@ -37,6 +41,11 @@
 
 #define TIMESTAMP_MARGIN 1.0 // seconds
 
+#define RECORD_BAG "ros2 bag record -s mcap -o "
+#define BAG_DIRECTORY "/home/lart-tasha/Documents/bags/"
+#define BAG_TOPICS "/zed/left/image_raw/compressed /zed/left/camera_info /mapping/cones /mapping/cones_markers /slam/map/markers /slam/map /slam/pose /slam/stats /path /path/markers /control/feedback /control/rpm_target /control/torque_target /control/target/marker /state/acu /state /state/nodes /mission/acu /mission /imu/angular_velocity /imu/acceleration /imu/gnss_pose /jetson /dv/slam_stats /dv/dynamics1 /dv/dynamics2 /cubemars/position_loop /cubemars/feedback /vcu/torque_target /vcu/rpm_target /status /res /vcu/hv /vcu/ign_r2d /vcu/rpm /aquisition/aqt1 /aquisition/aqt2 /aquisition/aqt3 /aquisition/aqt4 /aquisition/aqt7 /tf /tf_static"
+
+namespace bp = boost::process;
 using namespace std::placeholders;
 
 
@@ -58,6 +67,7 @@ class RaceDirector : public rclcpp::Node {
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;
+        boost::process::child bag_process_;
 
         int asms_state = 0;
 
@@ -104,6 +114,8 @@ class RaceDirector : public rclcpp::Node {
 
         void schedule_bag_stop();
 
+        void startRecordBagProcess();
+
         void stop_bag_recording();
 
         void send_state_to_nodes();
@@ -121,9 +133,6 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr steering_timestamp;
 
         rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr perception_timestamp;
-
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr start_bag_recording_client;
-        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stop_bag_recording_client;
 
     /* Publishers */
         rclcpp::Publisher<lart_msgs::msg::State>::SharedPtr state_publisher;
