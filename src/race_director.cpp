@@ -50,8 +50,8 @@ RaceDirector::RaceDirector() : Node("race_director"){
     //     this->perception_timestamp_timer = this->create_wall_timer(std::chrono::seconds(2), std::bind(&RaceDirector::request_perception_timestamp, this));
     // }
 
-    this->start_bag_recording_client = this->create_client<rosbag2_interfaces::srv::Resume>(SERVICE_START_BAG_RECORDING);
-    this->stop_bag_recording_client = this->create_client<rosbag2_interfaces::srv::Stop>(SERVICE_STOP_BAG_RECORDING);
+    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
+    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
     // this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
