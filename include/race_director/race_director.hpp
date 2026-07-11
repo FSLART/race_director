@@ -25,6 +25,7 @@
 #include "lart_msgs/msg/dynamics.hpp"
 #include "lart_msgs/msg/slam_stats.hpp"
 #include "lart_msgs/srv/heartbeat.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 #include "lart_msgs/msg/acu.hpp"
 #include "lart_msgs/msg/vcu_rpm.hpp"
@@ -41,8 +42,6 @@
 
 #define TIMESTAMP_MARGIN 1.0 // seconds
 
-#define RECORD_BAG "ros2 bag record -s mcap -o "
-#define BAG_DIRECTORY "/home/lart-fenix/Documents/bags/"
 #define BAG_TOPICS "/zed/left/image_raw/compressed /zed/left/camera_info /zed/image_annotations /mapping/cones /mapping/cones_markers /slam/map/markers /slam/map /slam/pose /slam/stats /path /path/markers /control/feedback /control/rpm_target /control/torque_target /control/target/marker /state/acu /state /state/nodes /mission/acu /mission /imu/angular_velocity /imu/acceleration /imu/gnss_pose /jetson /dv/slam_stats /dv/dynamics1 /dv/dynamics2 /cubemars/position_loop /cubemars/feedback /vcu/torque_target /vcu/rpm_target /status /res /vcu/hv /vcu/ign_r2d /vcu/rpm /aquisition/aqt1 /aquisition/aqt2 /aquisition/aqt3 /aquisition/aqt4 /aquisition/aqt7 /tf /tf_static"
 
 namespace bp = boost::process;
@@ -114,7 +113,7 @@ class RaceDirector : public rclcpp::Node {
 
         void schedule_bag_stop();
 
-        void startRecordBagProcess();
+        void start_record_bag();
 
         void stop_bag_recording();
 
@@ -133,6 +132,10 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr steering_timestamp;
 
         rclcpp::Client<lart_msgs::srv::Heartbeat>::SharedPtr perception_timestamp;
+
+        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr start_bag_recording_client;
+        rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stop_bag_recording_client;
+
 
     /* Publishers */
         rclcpp::Publisher<lart_msgs::msg::State>::SharedPtr state_publisher;

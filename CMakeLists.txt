@@ -12,11 +12,12 @@ find_package(std_msgs REQUIRED)
 find_package(lart_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
+find_package(std_srvs REQUIRED)
 
 add_library(race_director_lib SHARED
   src/race_director.cpp
 )
-ament_target_dependencies(race_director_lib rclcpp std_msgs lart_msgs geometry_msgs message_filters)
+ament_target_dependencies(race_director_lib rclcpp std_msgs lart_msgs geometry_msgs message_filters std_srvs)
 target_include_directories(race_director_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -32,7 +33,7 @@ add_executable(race_director
   src/race_director.cpp
 )
 target_link_libraries(race_director race_director_lib)
-ament_target_dependencies(race_director rclcpp std_msgs lart_msgs)
+ament_target_dependencies(race_director rclcpp std_msgs lart_msgs std_srvs)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(race_director_lib PRIVATE -Wno-unknown-pragmas)

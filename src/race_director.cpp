@@ -53,6 +53,10 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
     // this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
     
+
+    this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
+    this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
+
     /* Threads */
     this->state_thread = std::thread([this]() {
         rclcpp::Rate rate(10);
@@ -88,11 +92,7 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
     //start recording bag if ign is 1, stop recording if ign is 0
     if (msg->ign == 1){
         if (!this->bag_recording){
-            auto request = std::make_shared<rosbag2_interfaces::srv::Resume::Request>();
-            RCLCPP_INFO(this->get_logger(), "Calling start_bag_recording service");
-            this->start_bag_recording_client->async_send_request(request);
-            this->bag_recording = true;
-            this->bag_stop_timer.reset(); // allow a fresh delayed-stop to be scheduled for this session
+            this->start_record_bag();
         }
     }else{
         if (this->bag_recording){
@@ -354,35 +354,19 @@ void RaceDirector::schedule_bag_stop() {
     });
 }
 
-void RaceDirector::startRecordBagProcess() {
-    try {
-        // Get the current date
-        auto t = std::time(nullptr);
-        auto tm = *std::localtime(&t);
-
-        std::ostringstream bag_command;
-        bag_command << RECORD_BAG << BAG_DIRECTORY
-            << "bags_" << std::setw(2) << std::setfill('0') << tm.tm_mday
-            << "_" << std::setw(2) << std::setfill('0') << tm.tm_mon + 1
-            << "/bag_" << std::setw(2) << std::setfill('0') << tm.tm_hour << "_"
-            << std::setw(2) << std::setfill('0') << tm.tm_min << "_"
-            << std::setw(2) << std::setfill('0') << tm.tm_sec << " "
-            << BAG_TOPICS;
-
-        // Start the process using Boost.Process
-        this->bag_process_ = bp::child("/bin/bash", "-c", bag_command.str());
-
-        this->bag_recording = true; // Set the flag to true when the process starts
-    } catch (const std::exception &e) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to start bag recording process: %s", e.what());
-    }
+void RaceDirector::start_record_bag() {
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    RCLCPP_INFO(this->get_logger(), "Calling start_bag_recording service");
+    this->start_bag_recording_client->async_send_request(request);
+    this->bag_recording = true;
+    this->bag_stop_timer.reset();
 }
 
 void RaceDirector::stop_bag_recording() {
     if (!this->bag_recording) {
         return;
     }
-    auto request = std::make_shared<rosbag2_interfaces::srv::Stop::Request>();
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
     RCLCPP_INFO(this->get_logger(), "Calling stop_bag_recording service");
     this->stop_bag_recording_client->async_send_request(request);
     this->bag_recording = false;
