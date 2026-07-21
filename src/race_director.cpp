@@ -69,6 +69,9 @@ RaceDirector::RaceDirector() : Node("race_director"){
 
     this->send_jetson_msg_timer = this->create_wall_timer(std::chrono::duration<double>(0.02), [this]() { this->jetson_publisher->publish(this->jetson_msg); });
 
+    /* Lifecycle management of the pipeline nodes */
+    this->setup_lifecycle_management();
+
     rclcpp::on_shutdown([this]() {
         if (this->bag_recording) {
             ::kill(this->bag_process_.id(), SIGINT); // Terminate the bag recording process
@@ -80,6 +83,143 @@ RaceDirector::RaceDirector() : Node("race_director"){
 RaceDirector::~RaceDirector(){
     if (this->state_thread.joinable()) {
         this->state_thread.join();
+    }
+}
+
+/*------------------------------------------------------------------------------*/
+/*                          LIFECYCLE MANAGEMENT                                 */
+/*------------------------------------------------------------------------------*/
+// The race_director is the lifecycle manager for the pipeline nodes. Each managed
+// node is a super_node::ParentNode subclass that exposes the standard lifecycle
+// services. The race_director maps its own race state (OFF/READY/DRIVING/FINISH/
+// EMERGENCY) onto the lifecycle state each node should be in, and a periodic
+// reconcile loop nudges every node one transition at a time toward that target.
+//
+// This is intentionally decoupled from (and complementary to) the /state broadcast:
+// the broadcast still carries the race state for safety-critical, immediate reactions
+// (e.g. the control node's emergency brake), while lifecycle transitions perform the
+// orderly bring-up / tear-down of each node's resources.
+
+void RaceDirector::setup_lifecycle_management() {
+    // The lifecycle-managed pipeline nodes (super_node::ParentNode subclasses / rclpy
+    // LifecycleNode). NOTE: perception (zed_bridge) is intentionally NOT here: it uses
+    // image_transport, which cannot advertise from a lifecycle node, so it self-gates
+    // on the /state broadcast instead of being driven through the lifecycle services.
+    const std::vector<std::pair<std::string, std::string>> nodes = {
+        {"graph_slam_node", "slam"},
+        {"path_planner",    "planner"},
+        {"control_node",    "control"},
+    };
+
+    for (const auto &[name, role] : nodes) {
+        ManagedNode node;
+        node.name = name;
+        node.role = role;
+        node.change_client =
+            this->create_client<lifecycle_msgs::srv::ChangeState>(name + "/change_state");
+        node.get_client =
+            this->create_client<lifecycle_msgs::srv::GetState>(name + "/get_state");
+        this->managed_nodes_.push_back(node);
+    }
+
+    // Reconcile twice a second: fast enough that a race-state change brings the
+    // pipeline to its target within ~1 s, cheap enough to run continuously.
+    this->lifecycle_reconcile_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(500),
+        std::bind(&RaceDirector::reconcile_lifecycle, this));
+
+    RCLCPP_INFO(this->get_logger(), "Lifecycle management initialised for %zu nodes", this->managed_nodes_.size());
+}
+
+uint8_t RaceDirector::target_lifecycle_state(const std::string &role, int race_state) const {
+    using RS = lart_msgs::msg::State;
+    using LS = lifecycle_msgs::msg::State;
+
+    switch (race_state) {
+        case RS::OFF:
+            // Everything configured and idle, ready to be activated.
+            return LS::PRIMARY_STATE_INACTIVE;
+        case RS::READY:
+            // Build the map / plan the path before the run (slam, planner active);
+            // control must not actuate yet.
+            return (role == "control") ? LS::PRIMARY_STATE_INACTIVE
+                                       : LS::PRIMARY_STATE_ACTIVE;
+        case RS::DRIVING:
+            // Full pipeline active.
+            return LS::PRIMARY_STATE_ACTIVE;
+        case RS::FINISH:
+        case RS::EMERGENCY:
+            // Safe-stop: deactivate everything (control also hard-stops off /state).
+            return LS::PRIMARY_STATE_INACTIVE;
+        default:
+            return LS::PRIMARY_STATE_INACTIVE;
+    }
+}
+
+uint8_t RaceDirector::next_transition(uint8_t current_state, uint8_t target_state) const {
+    using LS = lifecycle_msgs::msg::State;
+    using T = lifecycle_msgs::msg::Transition;
+
+    if (current_state == target_state) {
+        return 0;  // already there
+    }
+
+    switch (current_state) {
+        case LS::PRIMARY_STATE_UNCONFIGURED:
+            // Only way forward is to configure (-> inactive).
+            return T::TRANSITION_CONFIGURE;
+        case LS::PRIMARY_STATE_INACTIVE:
+            if (target_state == LS::PRIMARY_STATE_ACTIVE) {
+                return T::TRANSITION_ACTIVATE;
+            }
+            if (target_state == LS::PRIMARY_STATE_UNCONFIGURED) {
+                return T::TRANSITION_CLEANUP;
+            }
+            return 0;
+        case LS::PRIMARY_STATE_ACTIVE:
+            // Step down toward inactive/unconfigured one transition at a time.
+            return T::TRANSITION_DEACTIVATE;
+        default:
+            // Transitional / finalized / error-processing: wait for it to settle.
+            return 0;
+    }
+}
+
+void RaceDirector::reconcile_node(const ManagedNode &node) {
+    // Skip nodes whose services are not up yet (e.g. not launched, or perception absent).
+    if (!node.get_client->service_is_ready() || !node.change_client->service_is_ready()) {
+        return;
+    }
+
+    const std::string role = node.role;
+    const std::string name = node.name;
+    auto change_client = node.change_client;
+    const int race_state = this->get_current_state();
+
+    auto get_request = std::make_shared<lifecycle_msgs::srv::GetState::Request>();
+    node.get_client->async_send_request(
+        get_request,
+        [this, role, name, change_client, race_state](
+            rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedFuture future) {
+            uint8_t current = future.get()->current_state.id;
+            uint8_t target = this->target_lifecycle_state(role, race_state);
+            uint8_t transition = this->next_transition(current, target);
+            if (transition == 0) {
+                return;  // already at target or in a transitional state
+            }
+
+            auto change_request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
+            change_request->transition.id = transition;
+            RCLCPP_INFO(this->get_logger(),
+                "Lifecycle: %s (current %u, target %u) -> transition %u",
+                name.c_str(), current, target, transition);
+            change_client->async_send_request(change_request);
+        });
+}
+
+void RaceDirector::reconcile_lifecycle() {
+    for (const auto &node : this->managed_nodes_) {
+        this->reconcile_node(node);
     }
 }
 

@@ -27,6 +27,12 @@
 #include "lart_msgs/srv/heartbeat.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
+// Lifecycle management of the managed pipeline nodes (slam / perception / control).
+#include "lifecycle_msgs/msg/state.hpp"
+#include "lifecycle_msgs/msg/transition.hpp"
+#include "lifecycle_msgs/srv/change_state.hpp"
+#include "lifecycle_msgs/srv/get_state.hpp"
+
 #include "lart_msgs/msg/acu.hpp"
 #include "lart_msgs/msg/vcu_rpm.hpp"
 #include "lart_msgs/msg/res.hpp"
@@ -110,6 +116,36 @@ class RaceDirector : public rclcpp::Node {
         void cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg);
 
         void change_state(int new_state);
+
+        /* Lifecycle management of the pipeline nodes */
+
+        // One managed lifecycle node (a super_node::ParentNode subclass): its node
+        // name plus clients for the standard change_state / get_state services that
+        // every lifecycle node exposes at "<node_name>/change_state" and "/get_state".
+        struct ManagedNode {
+            std::string name;
+            std::string role;  // "slam", "perception" or "control"
+            rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr change_client;
+            rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr get_client;
+        };
+
+        std::vector<ManagedNode> managed_nodes_;
+        rclcpp::TimerBase::SharedPtr lifecycle_reconcile_timer_;
+
+        // Create the service clients and the periodic reconcile timer.
+        void setup_lifecycle_management();
+
+        // Periodically drive every managed node one transition closer to the lifecycle
+        // state its role should be in for the current race state.
+        void reconcile_lifecycle();
+        void reconcile_node(const ManagedNode &node);
+
+        // The lifecycle primary state a role should be in for a given race state.
+        uint8_t target_lifecycle_state(const std::string &role, int race_state) const;
+
+        // The single transition that moves a node from its current primary state one
+        // step toward the target (0 == already there / nothing to do right now).
+        uint8_t next_transition(uint8_t current_state, uint8_t target_state) const;
 
         void schedule_bag_stop();
 
