@@ -51,7 +51,7 @@ RaceDirector::RaceDirector() : Node("race_director"){
     // }
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-    // this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
+    /this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
     
 
     this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
@@ -379,8 +379,6 @@ void RaceDirector::send_state_to_nodes() {
     // RCLCPP_INFO(this->get_logger(), "Publishing state: %d", msg.data);
 
     this->state_publisher->publish(msg);
-    // this->jetson_publisher->publish(this->jetson_msg);
-
 }
 
 void RaceDirector::send_handbook_msgs() {
