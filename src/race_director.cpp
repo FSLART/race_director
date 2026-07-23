@@ -51,7 +51,7 @@ RaceDirector::RaceDirector() : Node("race_director"){
     // }
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-    /this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
+    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
     
 
     this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
@@ -205,6 +205,7 @@ void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stampe
     this->dv_dynamics2_msg.acceleration_longitudinal = acc_msg->vector.x;
     this->dv_dynamics2_msg.acceleration_lateral= acc_msg->vector.y;
     this->dv_dynamics2_msg.yaw_rate = gyro_msg->vector.z;
+    this->last_imu_change = std::chrono::steady_clock::now();
 }
 
 void RaceDirector::torque_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
@@ -289,6 +290,16 @@ void RaceDirector::check_steering_timestamp(){
         RCLCPP_ERROR(this->get_logger(), "Steering feedback timestamp is too old: %f seconds", time_since_last_steering.count());
         this->change_state(lart_msgs::msg::State::EMERGENCY);
         this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_TIMEOUT;
+    }
+    
+    //check imu timestamp
+    if (this->last_imu_change.time_since_epoch().count() == 0)
+        return;
+    std::chrono::duration<double> time_since_last_imu = now - this->last_imu_change;
+    if (time_since_last_imu.count() > TIMESTAMP_MARGIN) {
+        RCLCPP_ERROR(this->get_logger(), "IMU timestamp is too old: %f seconds", time_since_last_imu.count());
+        this->change_state(lart_msgs::msg::State::EMERGENCY);
+        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_IMU;
     }
 }
 
