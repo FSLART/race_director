@@ -51,7 +51,7 @@ RaceDirector::RaceDirector() : Node("race_director"){
     // }
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
+    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(3), std::bind(&RaceDirector::check_steering_timestamp, this));
     
 
     this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
@@ -172,7 +172,7 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
                 this->change_state(lart_msgs::msg::State::FINISH);
         break;
             case lart_msgs::msg::State::EMERGENCY:
-            this->change_state(lart_msgs::msg::State::EMERGENCY);
+            //this->change_state(lart_msgs::msg::State::EMERGENCY);
             //TODO: Figure out a way to know which node caused the emergency
         break;
     }

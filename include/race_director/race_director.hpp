@@ -38,7 +38,7 @@
 #include "lart_msgs/msg/vcu_rpm_target.hpp"
 
 
-#define TIMESTAMP_MARGIN 1.0 // seconds
+#define TIMESTAMP_MARGIN 3.0 // seconds
 
 using namespace std::placeholders;
 
