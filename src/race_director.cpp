@@ -69,13 +69,6 @@ RaceDirector::RaceDirector() : Node("race_director"){
 
     this->send_jetson_msg_timer = this->create_wall_timer(std::chrono::duration<double>(0.02), [this]() { this->jetson_publisher->publish(this->jetson_msg); });
 
-    rclcpp::on_shutdown([this]() {
-        if (this->bag_recording) {
-            ::kill(this->bag_process_.id(), SIGINT); // Terminate the bag recording process
-            this->bag_recording = false;
-        }
-    });
-
 }
 RaceDirector::~RaceDirector(){
     if (this->state_thread.joinable()) {

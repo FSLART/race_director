@@ -9,8 +9,6 @@
 #include <sstream>
 #include <iomanip>
 #include <ctime>
-#include <csignal>
-#include <boost/process.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
@@ -42,9 +40,6 @@
 
 #define TIMESTAMP_MARGIN 1.0 // seconds
 
-#define BAG_TOPICS "/zed/left/image_raw/compressed /zed/left/camera_info /zed/image_annotations /mapping/cones /mapping/cones_markers /slam/map/markers /slam/map /slam/pose /slam/stats /path /path/markers /control/feedback /control/rpm_target /control/torque_target /control/target/marker /state/acu /state /state/nodes /mission/acu /mission /imu/angular_velocity /imu/acceleration /imu/gnss_pose /jetson /dv/slam_stats /dv/dynamics1 /dv/dynamics2 /cubemars/position_loop /cubemars/feedback /vcu/torque_target /vcu/rpm_target /status /res /vcu/hv /vcu/ign_r2d /vcu/rpm /aquisition/aqt1 /aquisition/aqt2 /aquisition/aqt3 /aquisition/aqt4 /aquisition/aqt7 /tf /tf_static"
-
-namespace bp = boost::process;
 using namespace std::placeholders;
 
 
@@ -67,7 +62,6 @@ class RaceDirector : public rclcpp::Node {
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;
-        boost::process::child bag_process_;
 
         int asms_state = 0;
 
