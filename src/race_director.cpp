@@ -79,15 +79,27 @@ RaceDirector::~RaceDirector(){
 void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
     this->asms_state = msg->asms;
     if (this->asms_state == 0){
+        // ASMS off ends the run (also the only way out of FINISH/EMERGENCY)
+        this->bag_run_ended = false;
+        if (this->bag_recording){
+            this->schedule_bag_stop();
+        }
         return;
     }
 
-    //start recording bag if ign is 1, stop recording if ign is 0
+    //start recording bag if ign is 1, stop recording 5 s after ign is 0
     if (msg->ign == 1){
-        if (!this->bag_recording){
-            this->start_record_bag();
+        if (!this->bag_run_ended){
+            if (this->bag_stop_timer){ // ignition came back before the delayed stop fired
+                this->bag_stop_timer->cancel();
+                this->bag_stop_timer.reset();
+            }
+            if (!this->bag_recording){
+                this->start_record_bag();
+            }
         }
     }else{
+        this->bag_run_ended = false;
         if (this->bag_recording){
             this->schedule_bag_stop();
         }
@@ -331,6 +343,7 @@ void RaceDirector::change_state(int new_state) {
     auto now = std::chrono::steady_clock::now();
     if(new_state == lart_msgs::msg::State::EMERGENCY){
         this->current_state = new_state;
+        this->bag_run_ended = true;
         this->schedule_bag_stop();
     }
 
@@ -344,6 +357,7 @@ void RaceDirector::change_state(int new_state) {
     this->last_state_change = std::chrono::steady_clock::now();
 
     if(new_state == lart_msgs::msg::State::FINISH){
+        this->bag_run_ended = true;
         this->schedule_bag_stop();
     }
 }
@@ -359,11 +373,22 @@ void RaceDirector::schedule_bag_stop() {
 }
 
 void RaceDirector::start_record_bag() {
+    // not ready or failed: bag_recording stays false and the next ACU message retries
+    if (!this->start_bag_recording_client->service_is_ready()) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "start_bag_recording service not available");
+        return;
+    }
     auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
     RCLCPP_INFO(this->get_logger(), "Calling start_bag_recording service");
-    this->start_bag_recording_client->async_send_request(request);
+    this->start_bag_recording_client->async_send_request(request,
+        [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+            auto response = future.get();
+            if (!response->success) {
+                RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "start_bag_recording failed: %s", response->message.c_str());
+                this->bag_recording = false;
+            }
+        });
     this->bag_recording = true;
-    this->bag_stop_timer.reset();
 }
 
 void RaceDirector::stop_bag_recording() {

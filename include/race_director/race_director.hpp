@@ -62,6 +62,7 @@ class RaceDirector : public rclcpp::Node {
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;
+        bool bag_run_ended = false; // FINISH/EMERGENCY stopped the bag, don't restart until ign or ASMS goes off
 
         int asms_state = 0;
 
