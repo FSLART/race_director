@@ -46,7 +46,9 @@ install(TARGETS race_director race_director_lib
 # Update the test target to link to the library
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(race_director_test test/race_director_test.cpp)
+  # isolated domain: the node under test publishes /state from its state thread
+  ament_add_gtest(race_director_test test/race_director_test.cpp TIMEOUT 60
+    ENV ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=177)
   if(TARGET race_director_test)
     ament_target_dependencies(race_director_test rclcpp lart_msgs)
     target_link_libraries(race_director_test race_director_lib)

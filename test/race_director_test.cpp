@@ -1,64 +1,86 @@
-// #include <gtest/gtest.h>
-// #include <rclcpp/rclcpp.hpp>
-// #include "race_director/race_director.hpp"
+// Calls the node's callbacks directly; nothing is published on /res, /acu or /imu.
+// CMake runs this on an isolated, localhost-only domain because the node's state thread publishes /state.
+#include <gtest/gtest.h>
+#include <rclcpp/rclcpp.hpp>
+#include "race_director/race_director.hpp"
 
+using lart_msgs::msg::State;
 
-// TEST(RaceDirectorTest, StartingState) {
-//     RaceDirector race_director = RaceDirector();
-//     EXPECT_EQ(race_director.get_current_state(), lart_msgs::msg::State::OFF);
-// }
+namespace {
 
-// TEST(RaceDirectorTest, StateTransitionToReady) {
-//     RaceDirector race_director = RaceDirector();
-//     auto msg = std::make_shared<lart_msgs::msg::State>();
-//     msg->data = lart_msgs::msg::State::READY;
+void send_acu(RaceDirector &rd, int asms, int as_state) {
+    auto msg = std::make_shared<lart_msgs::msg::Acu>();
+    msg->asms = asms;
+    msg->ign = 0; // ign 1 would try to start bag recording
+    msg->as_state = as_state;
+    rd.acu_callback(msg);
+}
 
-//     race_director.acu_state_callback(msg);
+void send_res(RaceDirector &rd, int signal) {
+    auto msg = std::make_shared<lart_msgs::msg::Res>();
+    msg->signal = signal;
+    rd.res_callback(msg);
+}
 
-//     EXPECT_EQ(race_director.get_current_state(), lart_msgs::msg::State::READY);
-// }
+void send_aqt1(RaceDirector &rd, int res) {
+    auto msg = std::make_shared<lart_msgs::msg::Aqt1>();
+    msg->res = res;
+    rd.aqt1_callback(msg);
+}
 
-// TEST(RaceDirectorTest, StateTransitionToDrivingBefore6Seconds) {
-//     RaceDirector race_director = RaceDirector();
-//     auto msg = std::make_shared<lart_msgs::msg::State>();
-//     msg->header.stamp = rclcpp::Clock().now();
-//     msg->data = lart_msgs::msg::State::READY;
+// READY, RES go before 6 s is ignored, RES go after 6 s goes to DRIVING
+void drive(RaceDirector &rd) {
+    send_acu(rd, 1, State::READY);
+    ASSERT_EQ(rd.get_current_state(), State::READY);
+    send_res(rd, 5);
+    ASSERT_EQ(rd.get_current_state(), State::READY);
+    std::this_thread::sleep_for(std::chrono::milliseconds(6200));
+    send_res(rd, 5);
+    ASSERT_EQ(rd.get_current_state(), State::DRIVING);
+}
 
-//     race_director.acu_state_callback(msg);
-//     msg->header.stamp = rclcpp::Clock().now();
-//     msg->data = lart_msgs::msg::State::DRIVING;
+}  // namespace
 
-//     race_director.acu_state_callback(msg);
+TEST(RaceDirectorTest, StartsOff) {
+    auto rd = std::make_shared<RaceDirector>();
+    EXPECT_EQ(rd->get_current_state(), State::OFF);
+}
 
-//     EXPECT_EQ(race_director.get_current_state(), lart_msgs::msg::State::READY);
-// }
+TEST(RaceDirectorTest, ReadyResGoAfter6sDrivingThenResStopEmergency) {
+    auto rd = std::make_shared<RaceDirector>();
+    drive(*rd);
+    // less than 1 s after DRIVING: the stop must not be held back by the 1 s guard
+    send_res(*rd, 0);
+    EXPECT_EQ(rd->get_current_state(), State::EMERGENCY);
+    // latched
+    send_acu(*rd, 1, State::READY);
+    send_res(*rd, 5);
+    EXPECT_EQ(rd->get_current_state(), State::EMERGENCY);
+}
 
-// TEST(RaceDirectorTest, StateTransitionToDrivingAfter6Seconds) {
-//     RaceDirector race_director = RaceDirector();
-//     auto msg = std::make_shared<lart_msgs::msg::State>();
-//     msg->header.stamp = rclcpp::Clock().now();
-//     msg->data = lart_msgs::msg::State::READY;
+TEST(RaceDirectorTest, ResStopInAnyState) {
+    auto rd = std::make_shared<RaceDirector>();
+    send_res(*rd, 0);
+    EXPECT_EQ(rd->get_current_state(), State::EMERGENCY);
+}
 
-//     race_director.acu_state_callback(msg);
+TEST(RaceDirectorTest, Aqt1ResStopOnlyWhileDriving) {
+    auto rd = std::make_shared<RaceDirector>();
+    send_acu(*rd, 1, State::READY);
+    send_aqt1(*rd, 0);
+    EXPECT_EQ(rd->get_current_state(), State::READY);
+    send_aqt1(*rd, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(6200));
+    send_res(*rd, 5);
+    ASSERT_EQ(rd->get_current_state(), State::DRIVING);
+    send_aqt1(*rd, 0);
+    EXPECT_EQ(rd->get_current_state(), State::EMERGENCY);
+}
 
-//     std::this_thread::sleep_for(std::chrono::seconds(7));
-
-//     msg->header.stamp = rclcpp::Clock().now();
-//     msg->data = lart_msgs::msg::State::DRIVING;
-
-//     race_director.acu_state_callback(msg);
-
-//     EXPECT_EQ(race_director.get_current_state(), lart_msgs::msg::State::DRIVING);
-// }
-
-
-// int main(int argc, char **argv) {
-//     rclcpp::init(argc, argv);
-//     setenv("UNIT_TEST", "1", 1);
-
-//     ::testing::InitGoogleTest(&argc, argv);
-//     int result = RUN_ALL_TESTS();
-
-//     rclcpp::shutdown();
-//     return result;
-// }
+int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
+    ::testing::InitGoogleTest(&argc, argv);
+    int result = RUN_ALL_TESTS();
+    rclcpp::shutdown();
+    return result;
+}

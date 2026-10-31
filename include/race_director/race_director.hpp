@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <chrono>
 #include <thread>
+#include <atomic>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -28,6 +29,7 @@
 #include "lart_msgs/msg/acu.hpp"
 #include "lart_msgs/msg/vcu_rpm.hpp"
 #include "lart_msgs/msg/res.hpp"
+#include "lart_msgs/msg/aqt1.hpp"
 #include "lart_msgs/msg/jetson.hpp"
 #include "lart_msgs/msg/dv_dynamics1.hpp"
 #include "lart_msgs/msg/dv_dynamics2.hpp"
@@ -38,7 +40,7 @@
 #include "lart_msgs/msg/vcu_rpm_target.hpp"
 
 
-#define TIMESTAMP_MARGIN 3.0 // seconds
+#define TIMESTAMP_MARGIN 2.0 // seconds
 
 using namespace std::placeholders;
 
@@ -49,6 +51,8 @@ class RaceDirector : public rclcpp::Node {
         ~RaceDirector();
         
         void acu_callback(const lart_msgs::msg::Acu::SharedPtr msg);
+        void res_callback(const lart_msgs::msg::Res::SharedPtr msg);
+        void aqt1_callback(const lart_msgs::msg::Aqt1::SharedPtr msg);
         int get_current_state();
 
     private:
@@ -58,7 +62,11 @@ class RaceDirector : public rclcpp::Node {
         int current_mission = lart_msgs::msg::Mission::MANUAL;
         std::chrono::steady_clock::time_point ready_change;
         std::chrono::steady_clock::time_point last_state_change;
-        std::chrono::steady_clock::time_point last_imu_change;
+        // set by each IMU topic on its own, so a timeout fires even if only one stops or the synchronizer never matches
+        std::chrono::steady_clock::time_point last_imu_acc {};
+        std::chrono::steady_clock::time_point last_imu_gyro {};
+        int last_res_signal = -1; // only for logging RES changes
+        int last_aqt1_res = -1;   // only for logging AQT1 res changes
         std::chrono::steady_clock::time_point last_steering_timestamp {};
         bool ready_change_set = false;
         bool bag_recording = false;
@@ -78,6 +86,7 @@ class RaceDirector : public rclcpp::Node {
 
         std::mutex state_mutex;
         std::thread state_thread;
+        std::atomic<bool> state_thread_running {false};
 
         rclcpp::TimerBase::SharedPtr steering_timestamp_timer;
         rclcpp::TimerBase::SharedPtr perception_timestamp_timer;
@@ -87,8 +96,6 @@ class RaceDirector : public rclcpp::Node {
     /* Functions */
 
         void vcu_control_feedback_callback(const lart_msgs::msg::VcuRpm::SharedPtr msg);
-
-        void res_callback(const lart_msgs::msg::Res::SharedPtr msg);
 
         void nodes_state_callback(const lart_msgs::msg::State::SharedPtr msg);
 
@@ -105,7 +112,8 @@ class RaceDirector : public rclcpp::Node {
 
         void cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeedback::SharedPtr msg);
 
-        void change_state(int new_state);
+        // emergency_cause is only used for EMERGENCY and is stored only on the first latch
+        void change_state(int new_state, const char *reason, int emergency_cause = lart_msgs::msg::Jetson::EMERGENCY_CAUSE_NONE);
 
         void schedule_bag_stop();
 
@@ -149,6 +157,7 @@ class RaceDirector : public rclcpp::Node {
         rclcpp::Subscription<lart_msgs::msg::Acu>::SharedPtr acu_subscriber;
         rclcpp::Subscription<lart_msgs::msg::VcuRpm>::SharedPtr vcu_rpm_subscriber;
         rclcpp::Subscription<lart_msgs::msg::Res>::SharedPtr res_subscriber;
+        rclcpp::Subscription<lart_msgs::msg::Aqt1>::SharedPtr aqt1_subscriber;
         rclcpp::Subscription<lart_msgs::msg::SlamStats>::SharedPtr slam_subscriber;
         rclcpp::Subscription<lart_msgs::msg::State>::SharedPtr nodes_state_subscriber;
         message_filters::Subscriber<geometry_msgs::msg::Vector3Stamped> imu_acc_sub_;

@@ -22,6 +22,7 @@ RaceDirector::RaceDirector() : Node("race_director"){
     this->acu_subscriber = this->create_subscription<lart_msgs::msg::Acu>(TOPIC_CAN_ACU, 10, std::bind(&RaceDirector::acu_callback, this, _1));
     this->vcu_rpm_subscriber = this->create_subscription<lart_msgs::msg::VcuRpm>(TOPIC_CAN_VCU_RPM, 10, std::bind(&RaceDirector::vcu_control_feedback_callback, this, _1));
     this->res_subscriber = this->create_subscription<lart_msgs::msg::Res>(TOPIC_CAN_RES, 10, std::bind(&RaceDirector::res_callback, this, _1));
+    this->aqt1_subscriber = this->create_subscription<lart_msgs::msg::Aqt1>(TOPIC_CAN_AQUTION_AQT1, 10, std::bind(&RaceDirector::aqt1_callback, this, _1));
     this->nodes_state_subscriber = this->create_subscription<lart_msgs::msg::State>(TOPIC_STATE_NODES, 10, std::bind(&RaceDirector::nodes_state_callback, this, _1));
     this->mission_subscriber = this->create_subscription<lart_msgs::msg::Mission>(TOPIC_MISSION_PC, 10, std::bind(&RaceDirector::mission_callback, this, _1));
     imu_acc_sub_.subscribe(this, TOPIC_IMU_ACCELERATION);
@@ -33,6 +34,14 @@ RaceDirector::RaceDirector() : Node("race_director"){
     //sync imu acc and gyro subs
     imu_sync_ = std::make_shared<message_filters::TimeSynchronizer<geometry_msgs::msg::Vector3Stamped, geometry_msgs::msg::Vector3Stamped>>(imu_acc_sub_, imu_gyro_sub_, 10);
     imu_sync_->registerCallback(std::bind(&RaceDirector::combined_imu_callback, this, _1, _2));
+    // IMU liveness comes from each topic directly, not from the exact-time synchronizer
+    using ImuCb = std::function<void(const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr &)>;
+    imu_acc_sub_.registerCallback(ImuCb([this](const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr &) {
+        this->last_imu_acc = std::chrono::steady_clock::now();
+    }));
+    imu_gyro_sub_.registerCallback(ImuCb([this](const geometry_msgs::msg::Vector3Stamped::ConstSharedPtr &) {
+        this->last_imu_gyro = std::chrono::steady_clock::now();
+    }));
 
     this->cubemars_feedback_subscriber = this->create_subscription<lart_msgs::msg::CubemarsFeedback>(TOPIC_CAN_CUBEMARS_FEEDBACK, 10, std::bind(&RaceDirector::cubemars_feedback_callback, this, _1));
     
@@ -51,26 +60,28 @@ RaceDirector::RaceDirector() : Node("race_director"){
     // }
 
     this->handbook_msgs_timer = this->create_wall_timer(std::chrono::duration<double>(0.1), std::bind(&RaceDirector::send_handbook_msgs, this));
-    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(3), std::bind(&RaceDirector::check_steering_timestamp, this));
+    this->steering_timestamp_timer = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RaceDirector::check_steering_timestamp, this));
     
 
     this->start_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_START_BAG_RECORDING);
     this->stop_bag_recording_client = this->create_client<std_srvs::srv::Trigger>(SERVICE_STOP_BAG_RECORDING);
 
     /* Threads */
+    // not detached: the destructor stops and joins it so it never touches a destroyed node
+    this->state_thread_running = true;
     this->state_thread = std::thread([this]() {
         rclcpp::Rate rate(10);
-        while (rclcpp::ok()) {
+        while (rclcpp::ok() && this->state_thread_running) {
             this->send_state_to_nodes();
             rate.sleep();
         }
     });
-    this->state_thread.detach();
 
     this->send_jetson_msg_timer = this->create_wall_timer(std::chrono::duration<double>(0.02), [this]() { this->jetson_publisher->publish(this->jetson_msg); });
 
 }
 RaceDirector::~RaceDirector(){
+    this->state_thread_running = false;
     if (this->state_thread.joinable()) {
         this->state_thread.join();
     }
@@ -113,19 +124,15 @@ void RaceDirector::acu_callback(const lart_msgs::msg::Acu::SharedPtr msg) {
 
     switch (received_state) {
         case lart_msgs::msg::State::OFF:
-            RCLCPP_INFO(this->get_logger(), "State changed to OFF");
-            this->change_state(lart_msgs::msg::State::OFF);
+            this->change_state(lart_msgs::msg::State::OFF, "ACU as_state OFF");
             break;
         case lart_msgs::msg::State::READY:
-            RCLCPP_INFO(this->get_logger(), "State changed to READY");
             this->ready_change = std::chrono::steady_clock::now();
             this->ready_change_set = true;
-            this->change_state(lart_msgs::msg::State::READY);
+            this->change_state(lart_msgs::msg::State::READY, "ACU as_state READY");
             break;
         case lart_msgs::msg::State::EMERGENCY:
-            RCLCPP_INFO(this->get_logger(), "State changed to EMERGENCY");
-            this->change_state(lart_msgs::msg::State::EMERGENCY);
-            this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ACU;
+            this->change_state(lart_msgs::msg::State::EMERGENCY, "ACU as_state EMERGENCY", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ACU);
             break;
     }
 
@@ -145,19 +152,37 @@ void RaceDirector::vcu_control_feedback_callback(const lart_msgs::msg::VcuRpm::S
 
 
 void RaceDirector::res_callback(const lart_msgs::msg::Res::SharedPtr msg){
-    int res_signal = msg->signal;
+    const int res_signal = msg->signal;
+    if (res_signal != this->last_res_signal) {
+        RCLCPP_WARN(this->get_logger(), "RES signal %d -> %d (state %d)", this->last_res_signal, res_signal, this->get_current_state());
+        this->last_res_signal = res_signal;
+    }
+
+    // stop first: no state condition and no guard in front of it
+    if (res_signal == 0){
+        this->change_state(lart_msgs::msg::State::EMERGENCY, "RES signal 0", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_RES);
+        return;
+    }
+
     if(this->ready_change_set){
         if (this->get_current_state() == lart_msgs::msg::State::READY){
             std::chrono::duration<double> time_in_ready = std::chrono::steady_clock::now() - this->ready_change;
             if((res_signal == 5 || res_signal == 7) && time_in_ready > std::chrono::seconds(6)) {
-                this->change_state(lart_msgs::msg::State::DRIVING);
+                this->change_state(lart_msgs::msg::State::DRIVING, "RES go signal after >6 s in READY");
             }
         }
     }
+}
 
-    if (res_signal == 0){
-        this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_RES;
+// second, independent RES input (RES bit from the acquisition board)
+void RaceDirector::aqt1_callback(const lart_msgs::msg::Aqt1::SharedPtr msg){
+    const int res = msg->res;
+    if (res != this->last_aqt1_res) {
+        RCLCPP_WARN(this->get_logger(), "AQT1 res %d -> %d (state %d)", this->last_aqt1_res, res, this->get_current_state());
+        this->last_aqt1_res = res;
+    }
+    if (res == 0 && this->get_current_state() == lart_msgs::msg::State::DRIVING) {
+        this->change_state(lart_msgs::msg::State::EMERGENCY, "AQT1 res 0 while DRIVING", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_RES);
     }
 }
 
@@ -169,7 +194,7 @@ void RaceDirector::nodes_state_callback(const lart_msgs::msg::State::SharedPtr m
     switch (received_state){
         case lart_msgs::msg::State::FINISH:
             if (current_state_var == lart_msgs::msg::State::DRIVING)
-                this->change_state(lart_msgs::msg::State::FINISH);
+                this->change_state(lart_msgs::msg::State::FINISH, "nodes reported FINISH");
         break;
             case lart_msgs::msg::State::EMERGENCY:
             //this->change_state(lart_msgs::msg::State::EMERGENCY);
@@ -210,7 +235,6 @@ void RaceDirector::combined_imu_callback(const geometry_msgs::msg::Vector3Stampe
     this->dv_dynamics2_msg.acceleration_longitudinal = acc_msg->vector.x;
     this->dv_dynamics2_msg.acceleration_lateral= acc_msg->vector.y;
     this->dv_dynamics2_msg.yaw_rate = gyro_msg->vector.z;
-    this->last_imu_change = std::chrono::steady_clock::now();
 }
 
 void RaceDirector::torque_control_callback(const lart_msgs::msg::DynamicsCMD::SharedPtr msg){
@@ -280,31 +304,37 @@ void RaceDirector::cubemars_feedback_callback(const lart_msgs::msg::CubemarsFeed
     this->dv_dynamics1_msg.steering_angle_actual = msg->position;
     if (msg->error_code != 0){
         RCLCPP_ERROR(this->get_logger(), "Cubemars error code: %d", msg->error_code);
-        this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_ERROR;
+        this->change_state(lart_msgs::msg::State::EMERGENCY, "Cubemars error code", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_ERROR);
     }
     this->last_steering_timestamp = std::chrono::steady_clock::now();
 }
 
 void RaceDirector::check_steering_timestamp(){
-    if(!this->asms_state || this->last_steering_timestamp.time_since_epoch().count() == 0)
+    if (!this->asms_state || this->get_current_state() == lart_msgs::msg::State::EMERGENCY)
         return;
-    auto now = std::chrono::steady_clock::now();
-    std::chrono::duration<double> time_since_last_steering = now - this->last_steering_timestamp;
-    if (time_since_last_steering.count() > TIMESTAMP_MARGIN) {
-        RCLCPP_ERROR(this->get_logger(), "Steering feedback timestamp is too old: %f seconds", time_since_last_steering.count());
-        this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_TIMEOUT;
+    const auto now = std::chrono::steady_clock::now();
+    const std::chrono::steady_clock::time_point never {};
+
+    // each source is only checked once it has been received at least once;
+    // a missing steering feedback no longer skips the IMU check
+    if (this->last_steering_timestamp != never) {
+        std::chrono::duration<double> age = now - this->last_steering_timestamp;
+        if (age.count() > TIMESTAMP_MARGIN) {
+            RCLCPP_ERROR(this->get_logger(), "Steering feedback timestamp is too old: %f seconds", age.count());
+            // this->change_state(lart_msgs::msg::State::EMERGENCY, "steering feedback timeout", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_STEERING_TIMEOUT);
+            return;
+        }
     }
-    
-    //check imu timestamp
-    if (this->last_imu_change.time_since_epoch().count() == 0)
-        return;
-    std::chrono::duration<double> time_since_last_imu = now - this->last_imu_change;
-    if (time_since_last_imu.count() > TIMESTAMP_MARGIN) {
-        RCLCPP_ERROR(this->get_logger(), "IMU timestamp is too old: %f seconds", time_since_last_imu.count());
-        this->change_state(lart_msgs::msg::State::EMERGENCY);
-        this->emergency_cause =lart_msgs::msg::Jetson::EMERGENCY_CAUSE_IMU;
+
+    for (const auto &[name, last] : {std::make_pair("acceleration", this->last_imu_acc), std::make_pair("angular_velocity", this->last_imu_gyro)}) {
+        if (last == never)
+            continue;
+        std::chrono::duration<double> age = now - last;
+        if (age.count() > TIMESTAMP_MARGIN) {
+            RCLCPP_ERROR(this->get_logger(), "IMU %s timestamp is too old: %f seconds", name, age.count());
+            // this->change_state(lart_msgs::msg::State::EMERGENCY, "IMU timeout", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_IMU);
+            return;
+        }
     }
 }
 
@@ -323,8 +353,7 @@ void RaceDirector::handle_perception_timestamp_response(rclcpp::Client<lart_msgs
         auto now = this->now();
 
         if ((now - last_perception_timestamp).seconds() > TIMESTAMP_MARGIN) {
-            this->change_state(lart_msgs::msg::State::EMERGENCY);
-            this->emergency_cause = lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ZED;
+            this->change_state(lart_msgs::msg::State::EMERGENCY, "perception timestamp too old", lart_msgs::msg::Jetson::EMERGENCY_CAUSE_ZED);
         }
         
     } catch (const std::exception &e) {
@@ -338,23 +367,38 @@ int RaceDirector::get_current_state(){
     return this->current_state;
 }
 
-void RaceDirector::change_state(int new_state) {
+void RaceDirector::change_state(int new_state, const char *reason, int cause) {
     std::lock_guard<std::mutex> lock(state_mutex);
-    auto now = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const int old_state = this->current_state;
+
+    // EMERGENCY is latched before any guard; the first cause is kept
     if(new_state == lart_msgs::msg::State::EMERGENCY){
-        this->current_state = new_state;
-        this->bag_run_ended = true;
-        this->schedule_bag_stop();
+        if (old_state != lart_msgs::msg::State::EMERGENCY) {
+            this->current_state = new_state;
+            this->last_state_change = now;
+            this->emergency_cause = cause;
+            RCLCPP_WARN(this->get_logger(), "State %d -> %d (EMERGENCY), reason: %s, emergency_cause: %d", old_state, new_state, reason, cause);
+            this->bag_run_ended = true;
+            this->schedule_bag_stop();
+        }
+        return;
     }
 
-    std::chrono::duration<double> time_in_state = std::chrono::steady_clock::now() - this->last_state_change;
-    if(time_in_state < std::chrono::seconds(1))
-        return;
-    if(this->current_state == lart_msgs::msg::State::EMERGENCY){
+    if(old_state == lart_msgs::msg::State::EMERGENCY){
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "State change to %d ignored (EMERGENCY is latched), reason: %s", new_state, reason);
         return;
     }
+    std::chrono::duration<double> time_in_state = now - this->last_state_change;
+    if(time_in_state < std::chrono::seconds(1)){
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "State change %d -> %d ignored (<1 s since last change), reason: %s", old_state, new_state, reason);
+        return;
+    }
+    if(new_state == old_state)
+        return;
     this->current_state = new_state;
-    this->last_state_change = std::chrono::steady_clock::now();
+    this->last_state_change = now;
+    RCLCPP_WARN(this->get_logger(), "State %d -> %d, reason: %s", old_state, new_state, reason);
 
     if(new_state == lart_msgs::msg::State::FINISH){
         this->bag_run_ended = true;
